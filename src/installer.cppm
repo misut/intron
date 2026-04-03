@@ -185,12 +185,10 @@ bool install(registry::ToolInfo const& info) {
             auto cfg_dir = dest / "etc" / "clang";
             std::filesystem::create_directories(cfg_dir);
             auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
-            auto lib_dir = dest / "lib";
             {
                 auto out = std::ofstream{cfg_file};
                 if (out) {
                     out << std::format("-isysroot {}\n", sdk_path);
-                    out << std::format("-L{}\n", lib_dir.string());
                 }
             }
 
