@@ -1,0 +1,4 @@
+[tools]
+clang = "latest"
+cmake = "latest"
+ninja = "latest"
