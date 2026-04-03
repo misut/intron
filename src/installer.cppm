@@ -48,6 +48,10 @@ void move_contents(std::filesystem::path const& src, std::filesystem::path const
     }
 }
 
+bool check_command(std::string_view name) {
+    return run(std::format("command -v '{}' >/dev/null 2>&1", name)) == 0;
+}
+
 } // namespace detail
 
 bool install(registry::ToolInfo const& info) {
@@ -59,6 +63,21 @@ bool install(registry::ToolInfo const& info) {
         return true;
     }
 
+    // 시스템 도구 사전 확인
+    if (!detail::check_command("curl")) {
+        std::println(std::cerr, "error: curl is required but not found");
+        return false;
+    }
+    if (info.archive_type == "zip" && !detail::check_command("unzip")) {
+        std::println(std::cerr, "error: unzip is required but not found");
+        return false;
+    }
+    if ((info.archive_type == "tar.xz" || info.archive_type == "tar.gz")
+        && !detail::check_command("tar")) {
+        std::println(std::cerr, "error: tar is required but not found");
+        return false;
+    }
+
     auto downloads = intron_home() / "downloads";
     std::filesystem::create_directories(downloads);
 
@@ -68,11 +87,21 @@ bool install(registry::ToolInfo const& info) {
     auto archive_name = std::string{url_sv.substr(slash + 1)};
     auto archive_path = downloads / archive_name;
 
+    // 실패 시 자동 정리를 위한 guard
+    bool success = false;
+    auto cleanup = [&] {
+        if (!success) {
+            std::filesystem::remove_all(dest);
+            std::filesystem::remove(archive_path);
+        }
+    };
+
     // 다운로드
     std::println("Downloading {} {}...", info.name, info.version);
     auto curl_cmd = std::format("curl -fSL -o '{}' '{}'", archive_path.string(), info.url);
     if (detail::run(curl_cmd) != 0) {
         std::println(std::cerr, "error: download failed");
+        cleanup();
         return false;
     }
 
@@ -85,10 +114,8 @@ bool install(registry::ToolInfo const& info) {
         if (detail::run(dl_cmd) == 0) {
             auto actual = detail::capture(
                 std::format("shasum -a 256 '{}'", archive_path.string()));
-            // actual 형식: "hash  filepath" → hash만 추출
             auto actual_hash = actual.substr(0, actual.find(' '));
 
-            // 체크섬 파일에서 해당 아카이브의 hash 찾기
             auto in = std::ifstream{checksum_file};
             std::string line;
             bool verified = false;
@@ -102,8 +129,8 @@ bool install(registry::ToolInfo const& info) {
                         std::println(std::cerr,
                             "error: checksum mismatch\n  expected: {}\n  actual:   {}",
                             expected_hash, actual_hash);
-                        std::filesystem::remove(archive_path);
                         std::filesystem::remove(checksum_file);
+                        cleanup();
                         return false;
                     }
                     break;
@@ -118,8 +145,8 @@ bool install(registry::ToolInfo const& info) {
         }
     }
 
-    // staging 디렉토리에 압축 해제
-    auto staging = intron_home() / "staging";
+    // staging 디렉토리에 압축 해제 (원자적 설치: staging → rename)
+    auto staging = intron_home() / "staging" / std::format("{}-{}", info.name, info.version);
     std::filesystem::create_directories(staging);
 
     std::println("Extracting...");
@@ -132,35 +159,41 @@ bool install(registry::ToolInfo const& info) {
             std::format("unzip -qo '{}' -d '{}'", archive_path.string(), staging.string()));
     } else {
         std::println(std::cerr, "error: unknown archive type: {}", info.archive_type);
+        std::filesystem::remove_all(staging);
+        cleanup();
         return false;
     }
 
     if (extract_status != 0) {
         std::println(std::cerr, "error: extraction failed");
         std::filesystem::remove_all(staging);
+        cleanup();
         return false;
     }
 
-    // strip_prefix에 따라 내용물을 최종 경로로 이동
-    std::filesystem::create_directories(dest);
+    // strip_prefix에 따라 staging 내에 최종 디렉토리 준비
+    auto prepared = intron_home() / "staging" / std::format("{}-{}-ready", info.name, info.version);
+    std::filesystem::create_directories(prepared);
 
     if (info.strip_prefix.empty()) {
-        // Ninja처럼 아카이브 루트에 바이너리가 직접 있는 경우
-        detail::move_contents(staging, dest);
+        detail::move_contents(staging, prepared);
     } else {
         auto src = staging / info.strip_prefix;
         if (!std::filesystem::exists(src)) {
             std::println(std::cerr, "error: expected directory '{}' not found in archive",
                 info.strip_prefix);
             std::filesystem::remove_all(staging);
-            std::filesystem::remove_all(dest);
+            std::filesystem::remove_all(prepared);
+            cleanup();
             return false;
         }
-        detail::move_contents(src, dest);
+        detail::move_contents(src, prepared);
     }
-
-    // 정리
     std::filesystem::remove_all(staging);
+
+    // 원자적으로 최종 경로에 배치
+    std::filesystem::create_directories(dest.parent_path());
+    std::filesystem::rename(prepared, dest);
     std::filesystem::remove(archive_path);
 
     // LLVM 설치 후 clang config 생성 + wrapper 설치
@@ -218,6 +251,7 @@ bool install(registry::ToolInfo const& info) {
         }
     }
 
+    success = true;
     std::println("Installed {} {} to {}", info.name, info.version, dest.string());
     return true;
 }
