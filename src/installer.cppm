@@ -268,4 +268,30 @@ std::optional<std::filesystem::path> which(
     return std::nullopt;
 }
 
+std::optional<std::string> latest_version(std::string_view tool) {
+    auto api_url = registry::latest_release_api(tool);
+    auto json = detail::capture(
+        std::format("curl -fsSL '{}'", api_url));
+    if (json.empty()) return std::nullopt;
+
+    // "tag_name": "v1.2.3" 또는 "tag_name": "llvmorg-22.1.2" 에서 버전 추출
+    auto pos = json.find("\"tag_name\"");
+    if (pos == std::string::npos) return std::nullopt;
+    auto colon = json.find(':', pos);
+    auto quote1 = json.find('"', colon + 1);
+    auto quote2 = json.find('"', quote1 + 1);
+    if (quote1 == std::string::npos || quote2 == std::string::npos) return std::nullopt;
+
+    auto tag = json.substr(quote1 + 1, quote2 - quote1 - 1);
+
+    // 태그에서 버전만 추출: "v1.2.3" → "1.2.3", "llvmorg-22.1.2" → "22.1.2"
+    if (tag.starts_with("v")) {
+        return tag.substr(1);
+    }
+    if (auto dash = tag.rfind('-'); dash != std::string::npos) {
+        return tag.substr(dash + 1);
+    }
+    return tag;
+}
+
 } // namespace installer

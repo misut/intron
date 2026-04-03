@@ -103,4 +103,20 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
+// GitHub API에서 최신 릴리즈 태그를 가져오기 위한 URL
+std::string latest_release_api(std::string_view tool) {
+    if (tool == "llvm") {
+        return "https://api.github.com/repos/llvm/llvm-project/releases/latest";
+    }
+    if (tool == "cmake") {
+        return "https://api.github.com/repos/Kitware/CMake/releases/latest";
+    }
+    if (tool == "ninja") {
+        return "https://api.github.com/repos/ninja-build/ninja/releases/latest";
+    }
+    throw std::runtime_error(std::format("unknown tool: {}", tool));
+}
+
+constexpr std::array<std::string_view, 3> supported_tools = {"cmake", "llvm", "ninja"};
+
 } // namespace registry
