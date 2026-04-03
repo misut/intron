@@ -24,6 +24,21 @@ int run(std::string const& cmd) {
     return std::system(cmd.c_str());
 }
 
+std::string capture(std::string const& cmd) {
+    auto tmp = std::filesystem::temp_directory_path() / "intron_capture.tmp";
+    auto full_cmd = std::format("{} > '{}' 2>/dev/null", cmd, tmp.string());
+    if (std::system(full_cmd.c_str()) != 0) return {};
+    auto in = std::ifstream{tmp};
+    auto result = std::string{
+        std::istreambuf_iterator<char>{in},
+        std::istreambuf_iterator<char>{}};
+    std::filesystem::remove(tmp);
+    while (!result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+    return result;
+}
+
 // 디렉토리 내의 모든 항목을 대상 경로로 이동
 void move_contents(std::filesystem::path const& src, std::filesystem::path const& dst) {
     std::filesystem::create_directories(dst);
@@ -105,6 +120,63 @@ bool install(registry::ToolInfo const& info) {
     // 정리
     std::filesystem::remove_all(staging);
     std::filesystem::remove(archive_path);
+
+    // LLVM 설치 후 clang config 생성 + wrapper 설치
+    if (info.name == "llvm") {
+        auto clang = dest / "bin" / "clang";
+        auto target = detail::capture(std::format("'{}' -dumpmachine", clang.string()));
+        auto sdk_path = detail::capture("xcrun --show-sdk-path");
+        if (!target.empty() && !sdk_path.empty()) {
+            // target에서 OS major 버전만 남김
+            // arm64-apple-darwin25.3.0 → arm64-apple-darwin25
+            auto cfg_target = target;
+            auto darwin_pos = cfg_target.find("darwin");
+            if (darwin_pos != std::string::npos) {
+                auto ver_start = darwin_pos + 6;
+                auto dot = cfg_target.find('.', ver_start);
+                if (dot != std::string::npos) {
+                    cfg_target = cfg_target.substr(0, dot);
+                }
+            }
+
+            // config file 생성
+            auto cfg_dir = dest / "etc" / "clang";
+            std::filesystem::create_directories(cfg_dir);
+            auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
+            auto lib_dir = dest / "lib";
+            {
+                auto out = std::ofstream{cfg_file};
+                if (out) {
+                    out << std::format("-isysroot {}\n", sdk_path);
+                    out << std::format("-L{}\n", lib_dir.string());
+                }
+            }
+
+            // 원본 바이너리를 .orig로 이동하고 wrapper 생성
+            auto bin_dir = dest / "bin";
+            auto cfg_flag = std::format("--config-system-dir={}", cfg_dir.string());
+            for (auto name : {"clang", "clang++"}) {
+                auto orig = bin_dir / name;
+                auto backup = bin_dir / std::format("{}.orig", name);
+                if (std::filesystem::exists(orig) && !std::filesystem::exists(backup)) {
+                    std::filesystem::rename(orig, backup);
+                    auto out = std::ofstream{orig};
+                    if (out) {
+                        out << "#!/bin/sh\n";
+                        out << std::format("exec \"{}\" {} \"$@\"\n",
+                            backup.string(), cfg_flag);
+                    }
+                    std::filesystem::permissions(orig,
+                        std::filesystem::perms::owner_exec |
+                        std::filesystem::perms::group_exec |
+                        std::filesystem::perms::others_exec,
+                        std::filesystem::perm_options::add);
+                }
+            }
+
+            std::println("Generated clang config: {}", cfg_file.string());
+        }
+    }
 
     std::println("Installed {} {} to {}", info.name, info.version, dest.string());
     return true;
