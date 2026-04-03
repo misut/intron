@@ -92,24 +92,29 @@ bool install(registry::ToolInfo const& info) {
     auto cleanup = [&] {
         if (!success) {
             std::filesystem::remove_all(dest);
-            std::filesystem::remove(archive_path);
         }
     };
 
-    // 다운로드
-    std::println("Downloading {} {}...", info.name, info.version);
-    auto curl_cmd = std::format("curl -fSL -o '{}' '{}'", archive_path.string(), info.url);
-    if (detail::run(curl_cmd) != 0) {
-        std::println(std::cerr, "error: download failed");
-        cleanup();
-        return false;
+    // 다운로드 (캐시된 아카이브가 있으면 재사용)
+    if (std::filesystem::exists(archive_path)) {
+        std::println("Using cached archive for {} {}...", info.name, info.version);
+    } else {
+        std::println("Downloading {} {}...", info.name, info.version);
+        auto curl_cmd = std::format("curl -fSL --compressed -o '{}' '{}'",
+            archive_path.string(), info.url);
+        if (detail::run(curl_cmd) != 0) {
+            std::println(std::cerr, "error: download failed");
+            std::filesystem::remove(archive_path);
+            cleanup();
+            return false;
+        }
     }
 
     // 체크섬 검증
     if (!info.checksum_url.empty()) {
         std::println("Verifying checksum...");
         auto checksum_file = downloads / "checksums.txt";
-        auto dl_cmd = std::format("curl -fsSL -o '{}' '{}'",
+        auto dl_cmd = std::format("curl -fsSL --compressed -o '{}' '{}'",
             checksum_file.string(), info.checksum_url);
         if (detail::run(dl_cmd) == 0) {
             auto actual = detail::capture(
@@ -152,8 +157,17 @@ bool install(registry::ToolInfo const& info) {
     std::println("Extracting...");
     int extract_status = 0;
     if (info.archive_type == "tar.xz" || info.archive_type == "tar.gz") {
+        // --strip-components로 strip_prefix를 tar 레벨에서 처리
+        int depth = 0;
+        if (!info.strip_prefix.empty()) {
+            depth = 1;
+            for (auto c : info.strip_prefix) {
+                if (c == '/') ++depth;
+            }
+        }
         extract_status = detail::run(
-            std::format("tar xf '{}' -C '{}'", archive_path.string(), staging.string()));
+            std::format("tar xf '{}' --strip-components={} -C '{}'",
+                archive_path.string(), depth, staging.string()));
     } else if (info.archive_type == "zip") {
         extract_status = detail::run(
             std::format("unzip -qo '{}' -d '{}'", archive_path.string(), staging.string()));
@@ -171,30 +185,9 @@ bool install(registry::ToolInfo const& info) {
         return false;
     }
 
-    // strip_prefix에 따라 staging 내에 최종 디렉토리 준비
-    auto prepared = intron_home() / "staging" / std::format("{}-{}-ready", info.name, info.version);
-    std::filesystem::create_directories(prepared);
-
-    if (info.strip_prefix.empty()) {
-        detail::move_contents(staging, prepared);
-    } else {
-        auto src = staging / info.strip_prefix;
-        if (!std::filesystem::exists(src)) {
-            std::println(std::cerr, "error: expected directory '{}' not found in archive",
-                info.strip_prefix);
-            std::filesystem::remove_all(staging);
-            std::filesystem::remove_all(prepared);
-            cleanup();
-            return false;
-        }
-        detail::move_contents(src, prepared);
-    }
-    std::filesystem::remove_all(staging);
-
     // 원자적으로 최종 경로에 배치
     std::filesystem::create_directories(dest.parent_path());
-    std::filesystem::rename(prepared, dest);
-    std::filesystem::remove(archive_path);
+    std::filesystem::rename(staging, dest);
 
     // LLVM 설치 후 clang config 생성 + wrapper 설치
     if (info.name == "llvm") {
