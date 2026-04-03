@@ -222,6 +222,7 @@ bool install(registry::ToolInfo const& info) {
                 auto out = std::ofstream{cfg_file};
                 if (out) {
                     out << std::format("-isysroot {}\n", sdk_path);
+                    out << "-stdlib=libc++\n";
                 }
             }
 
