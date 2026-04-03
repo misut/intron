@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install llvm ninja
+
+      - name: Install exon
+        run: |
+          gh release download v0.0.0 -R misut/exon -p 'exon-*-aarch64-apple-darwin.tar.gz'
+          tar xzf exon-*.tar.gz
+          sudo mv exon /usr/local/bin/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          exon build
+
+      - name: Verify
+        run: .exon/debug/intron help
