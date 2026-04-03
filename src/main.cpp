@@ -64,7 +64,7 @@ int cmd_list() {
         std::println("No toolchains installed");
         return 0;
     }
-    auto defaults = config::load_defaults();
+    auto defaults = config::load_effective_defaults();
     for (auto const& [tool, version] : installed) {
         auto it = defaults.find(tool);
         if (it != defaults.end() && it->second == version) {
@@ -125,7 +125,7 @@ int cmd_default(int argc, char* argv[]) {
 
 int cmd_update() {
     auto installed = installer::list_installed();
-    auto defaults = config::load_defaults();
+    auto defaults = config::load_effective_defaults();
 
     // 설치된 도구 + default 도구의 합집합
     std::map<std::string, std::string> current;
@@ -222,7 +222,7 @@ int cmd_self_update(std::string_view self_path) {
 }
 
 int cmd_env() {
-    auto defaults = config::load_defaults();
+    auto defaults = config::load_effective_defaults();
     if (defaults.empty()) {
         std::println(std::cerr, "error: no default versions set");
         std::println(std::cerr, "hint: run 'intron default <tool> <version>'");
