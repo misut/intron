@@ -76,6 +76,48 @@ bool install(registry::ToolInfo const& info) {
         return false;
     }
 
+    // 체크섬 검증
+    if (!info.checksum_url.empty()) {
+        std::println("Verifying checksum...");
+        auto checksum_file = downloads / "checksums.txt";
+        auto dl_cmd = std::format("curl -fsSL -o '{}' '{}'",
+            checksum_file.string(), info.checksum_url);
+        if (detail::run(dl_cmd) == 0) {
+            auto actual = detail::capture(
+                std::format("shasum -a 256 '{}'", archive_path.string()));
+            // actual 형식: "hash  filepath" → hash만 추출
+            auto actual_hash = actual.substr(0, actual.find(' '));
+
+            // 체크섬 파일에서 해당 아카이브의 hash 찾기
+            auto in = std::ifstream{checksum_file};
+            std::string line;
+            bool verified = false;
+            while (std::getline(in, line)) {
+                if (line.contains(archive_name)) {
+                    auto expected_hash = line.substr(0, line.find(' '));
+                    if (actual_hash == expected_hash) {
+                        std::println("Checksum OK");
+                        verified = true;
+                    } else {
+                        std::println(std::cerr,
+                            "error: checksum mismatch\n  expected: {}\n  actual:   {}",
+                            expected_hash, actual_hash);
+                        std::filesystem::remove(archive_path);
+                        std::filesystem::remove(checksum_file);
+                        return false;
+                    }
+                    break;
+                }
+            }
+            std::filesystem::remove(checksum_file);
+            if (!verified) {
+                std::println("warning: checksum entry not found, skipping verification");
+            }
+        } else {
+            std::println("warning: could not download checksum file, skipping verification");
+        }
+    }
+
     // staging 디렉토리에 압축 해제
     auto staging = intron_home() / "staging";
     std::filesystem::create_directories(staging);

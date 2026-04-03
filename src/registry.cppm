@@ -9,6 +9,7 @@ struct ToolInfo {
     std::string url;
     std::string archive_type;  // "tar.xz", "tar.gz", "zip"
     std::string strip_prefix;  // 아카이브 내부 최상위 디렉토리
+    std::string checksum_url;  // SHA-256 체크섬 파일 URL (비어있으면 검증 생략)
 };
 
 enum class OS { macOS, Linux };
@@ -79,6 +80,9 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
                 version, filename),
             .archive_type = "tar.gz",
             .strip_prefix = prefix,
+            .checksum_url = std::format(
+                "https://github.com/Kitware/CMake/releases/download/v{}/cmake-{}-SHA-256.txt",
+                version, version),
         };
     }
 
