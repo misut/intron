@@ -33,6 +33,7 @@ void print_usage() {
     std::println("  list                       List installed toolchains");
     std::println("  which   <binary>           Print path to binary");
     std::println("  default <tool> <version>   Set default version");
+    std::println("  update                     Check for updates");
     std::println("  env                        Print environment variables");
     std::println("  help                       Show this message");
     std::println("");
@@ -121,6 +122,56 @@ int cmd_default(int argc, char* argv[]) {
     return 0;
 }
 
+int cmd_update() {
+    auto installed = installer::list_installed();
+    auto defaults = config::load_defaults();
+
+    // 설치된 도구 + default 도구의 합집합
+    std::map<std::string, std::string> current;
+    for (auto const& [tool, version] : installed) {
+        if (!current.contains(tool)) {
+            current[tool] = version;
+        }
+    }
+    for (auto const& [tool, version] : defaults) {
+        if (!current.contains(tool)) {
+            current[tool] = version;
+        }
+    }
+
+    if (current.empty()) {
+        // 설치된 게 없으면 모든 도구의 최신 버전 표시
+        for (auto tool : registry::supported_tools) {
+            auto latest = installer::latest_version(tool);
+            if (latest) {
+                std::println("{}: latest {}", tool, *latest);
+            }
+        }
+        return 0;
+    }
+
+    bool has_update = false;
+    for (auto const& [tool, version] : current) {
+        auto latest = installer::latest_version(tool);
+        if (!latest) {
+            std::println("{} {}: could not check latest", tool, version);
+            continue;
+        }
+        if (*latest != version) {
+            std::println("{} {} -> {} (update available)", tool, version, *latest);
+            has_update = true;
+        } else {
+            std::println("{} {} (up to date)", tool, version);
+        }
+    }
+
+    if (has_update) {
+        std::println("");
+        std::println("Run 'intron install <tool> <version>' to update");
+    }
+    return 0;
+}
+
 int cmd_env() {
     auto defaults = config::load_defaults();
     if (defaults.empty()) {
@@ -179,6 +230,7 @@ int main(int argc, char* argv[]) {
         if (command == "list")    return cmd_list();
         if (command == "which")   return cmd_which(argc, argv);
         if (command == "default") return cmd_default(argc, argv);
+        if (command == "update")  return cmd_update();
         if (command == "env")     return cmd_env();
         if (command == "help" || command == "--help" || command == "-h") {
             print_usage();
