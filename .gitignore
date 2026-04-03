@@ -43,5 +43,8 @@
 # Build
 build/
 
+# IDE
+.vscode/
+
 # Claude Code
 CLAUDE.md
