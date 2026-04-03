@@ -223,6 +223,7 @@ bool install(registry::ToolInfo const& info) {
                 if (out) {
                     out << std::format("-isysroot {}\n", sdk_path);
                     out << "-stdlib=libc++\n";
+                    out << "-lc++\n";
                 }
             }
 
