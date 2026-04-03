@@ -33,6 +33,7 @@ void print_usage() {
     std::println("  list                       List installed toolchains");
     std::println("  which   <binary>           Print path to binary");
     std::println("  default <tool> <version>   Set default version");
+    std::println("  env                        Print environment variables");
     std::println("  help                       Show this message");
     std::println("");
     std::println("Tools: llvm, cmake, ninja");
@@ -120,6 +121,48 @@ int cmd_default(int argc, char* argv[]) {
     return 0;
 }
 
+int cmd_env() {
+    auto defaults = config::load_defaults();
+    if (defaults.empty()) {
+        std::println(std::cerr, "error: no default versions set");
+        std::println(std::cerr, "hint: run 'intron default <tool> <version>'");
+        return 1;
+    }
+
+    // PATH에 추가할 bin 디렉토리 수집
+    std::vector<std::string> paths;
+    for (auto const& [tool, version] : defaults) {
+        auto base = installer::toolchain_path(tool, version);
+        if (!std::filesystem::exists(base)) continue;
+        if (tool == "ninja") {
+            paths.push_back(base.string());
+        } else {
+            paths.push_back((base / "bin").string());
+        }
+    }
+
+    if (paths.empty()) return 0;
+
+    // PATH
+    std::string path_val;
+    for (auto const& p : paths) {
+        if (!path_val.empty()) path_val += ':';
+        path_val += p;
+    }
+    std::println("export PATH=\"{}:$PATH\";", path_val);
+
+    // CC/CXX (LLVM이 default에 있을 때)
+    if (defaults.contains("llvm")) {
+        auto llvm_bin = installer::toolchain_path("llvm", defaults.at("llvm")) / "bin";
+        if (std::filesystem::exists(llvm_bin / "clang")) {
+            std::println("export CC=\"{}\";", (llvm_bin / "clang").string());
+            std::println("export CXX=\"{}\";", (llvm_bin / "clang++").string());
+        }
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -136,6 +179,7 @@ int main(int argc, char* argv[]) {
         if (command == "list")    return cmd_list();
         if (command == "which")   return cmd_which(argc, argv);
         if (command == "default") return cmd_default(argc, argv);
+        if (command == "env")     return cmd_env();
         if (command == "help" || command == "--help" || command == "-h") {
             print_usage();
             return 0;
