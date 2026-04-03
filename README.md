@@ -4,6 +4,20 @@ A toolchain manager for C++. Inspired by rustup.
 
 ## Installation
 
+### Script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
+```
+
+### mise
+
+```sh
+mise plugin add intron https://github.com/misut/mise-intron.git
+mise install intron@0.0.0
+mise use intron@0.0.0
+```
+
 ### Build from source
 
 Requires [Homebrew LLVM](https://formulae.brew.sh/formula/llvm) and [exon](https://github.com/misut/exon).
