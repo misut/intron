@@ -114,6 +114,9 @@ std::string latest_release_api(std::string_view tool) {
     if (tool == "ninja") {
         return "https://api.github.com/repos/ninja-build/ninja/releases/latest";
     }
+    if (tool == "intron") {
+        return "https://api.github.com/repos/misut/intron/releases/latest";
+    }
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 

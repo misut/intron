@@ -35,6 +35,7 @@ void print_usage() {
     std::println("  default <tool> <version>   Set default version");
     std::println("  update                     Check for updates");
     std::println("  env                        Print environment variables");
+    std::println("  self-update                Update intron itself");
     std::println("  help                       Show this message");
     std::println("");
     std::println("Tools: llvm, cmake, ninja");
@@ -172,6 +173,54 @@ int cmd_update() {
     return 0;
 }
 
+int cmd_self_update(std::string_view self_path) {
+    // 현재 버전
+    constexpr auto current_version = "0.2.1";
+
+    // 최신 버전 확인
+    std::println("Checking for updates...");
+    auto latest = installer::latest_version("intron");
+    if (!latest) {
+        std::println(std::cerr, "error: could not check latest version");
+        return 1;
+    }
+    if (*latest == current_version) {
+        std::println("intron {} is already up to date", current_version);
+        return 0;
+    }
+    std::println("Updating intron {} -> {}...", current_version, *latest);
+
+    // 다운로드
+    auto tmp = std::filesystem::temp_directory_path() / "intron-update";
+    std::filesystem::create_directories(tmp);
+    auto archive = tmp / "intron.tar.gz";
+    auto url = std::format(
+        "https://github.com/misut/intron/releases/download/v{}/intron-v{}-aarch64-apple-darwin.tar.gz",
+        *latest, *latest);
+    auto dl_cmd = std::format("curl -fsSL -o '{}' '{}'", archive.string(), url);
+    if (std::system(dl_cmd.c_str()) != 0) {
+        std::println(std::cerr, "error: download failed");
+        std::filesystem::remove_all(tmp);
+        return 1;
+    }
+
+    // 압축 해제
+    if (std::system(std::format("tar xzf '{}' -C '{}'", archive.string(), tmp.string()).c_str()) != 0) {
+        std::println(std::cerr, "error: extraction failed");
+        std::filesystem::remove_all(tmp);
+        return 1;
+    }
+
+    // 자기 자신 교체
+    auto new_binary = tmp / "intron";
+    auto target = std::filesystem::canonical(self_path);
+    std::filesystem::rename(new_binary, target);
+    std::filesystem::remove_all(tmp);
+
+    std::println("Updated intron to {}", *latest);
+    return 0;
+}
+
 int cmd_env() {
     auto defaults = config::load_defaults();
     if (defaults.empty()) {
@@ -232,6 +281,7 @@ int main(int argc, char* argv[]) {
         if (command == "default") return cmd_default(argc, argv);
         if (command == "update")  return cmd_update();
         if (command == "env")     return cmd_env();
+        if (command == "self-update") return cmd_self_update(argv[0]);
         if (command == "help" || command == "--help" || command == "-h") {
             print_usage();
             return 0;
