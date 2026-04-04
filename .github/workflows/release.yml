@@ -23,9 +23,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (macOS)
+      - name: Install intron (macOS)
         if: runner.os == 'macOS'
-        run: brew install llvm ninja
+        run: |
+          gh release download -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
+          tar xzf intron-*.tar.gz && sudo mv intron /usr/local/bin/ && rm intron-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install toolchains (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          intron install llvm 22.1.2
+          intron install cmake 4.3.1
+          intron install ninja 1.13.2
+          intron default llvm 22.1.2
+          intron default cmake 4.3.1
+          intron default ninja 1.13.2
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -36,7 +50,7 @@ jobs:
 
       - name: Install exon
         run: |
-          gh release download v0.5.0 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+          gh release download v0.7.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
           tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,7 +58,7 @@ jobs:
       - name: Build
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            export PATH="$(brew --prefix llvm)/bin:$PATH"
+            eval "$(intron env)"
           else
             export PATH="/usr/lib/llvm-20/bin:$PATH"
           fi
