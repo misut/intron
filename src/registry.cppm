@@ -116,6 +116,10 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
             filename = "ninja-mac.zip";
         } else if (plat.os == OS::Windows) {
             filename = "ninja-win.zip";
+        } else if (plat.arch == Arch::ARM64) {
+            throw std::runtime_error(
+                "ninja does not provide ARM64 Linux binaries.\n"
+                "hint: install via system package manager (e.g. apt install ninja-build)");
         } else {
             filename = "ninja-linux.zip";
         }
