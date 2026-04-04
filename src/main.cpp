@@ -24,7 +24,11 @@ std::optional<std::string> tool_for_binary(std::string_view binary) {
     return std::nullopt;
 }
 
+constexpr auto intron_version = "0.9.0";
+
 void print_usage() {
+    std::println("intron {}", intron_version);
+    std::println("");
     std::println("Usage: intron <command> [args...]");
     std::println("");
     std::println("Commands:");
@@ -34,6 +38,7 @@ void print_usage() {
     std::println("  which   <binary>           Print path to binary");
     std::println("  default <tool> <version>   Set default version");
     std::println("  update                     Check for updates");
+    std::println("  upgrade [tool]             Upgrade tools to latest");
     std::println("  env                        Print environment variables");
     std::println("  self-update                Update intron itself");
     std::println("  help                       Show this message");
@@ -173,8 +178,66 @@ int cmd_update() {
     return 0;
 }
 
+int cmd_upgrade(int argc, char* argv[]) {
+    auto installed = installer::list_installed();
+    auto defaults = config::load_effective_defaults();
+
+    // Build list of tools to upgrade
+    std::map<std::string, std::string> current;
+    for (auto const& [tool, version] : installed) {
+        if (!current.contains(tool)) current[tool] = version;
+    }
+    for (auto const& [tool, version] : defaults) {
+        if (!current.contains(tool)) current[tool] = version;
+    }
+
+    // Filter to specific tool if requested
+    if (argc >= 3) {
+        auto tool = std::string{argv[2]};
+        if (!current.contains(tool)) {
+            std::println(std::cerr, "error: {} is not installed", tool);
+            return 1;
+        }
+        auto version = current[tool];
+        current.clear();
+        current[tool] = version;
+    }
+
+    if (current.empty()) {
+        std::println("No toolchains installed");
+        return 0;
+    }
+
+    int upgraded = 0;
+    for (auto const& [tool, version] : current) {
+        auto latest = installer::latest_version(tool);
+        if (!latest) {
+            std::println("{}: could not check latest version", tool);
+            continue;
+        }
+        if (*latest == version) {
+            std::println("{} {} (up to date)", tool, version);
+            continue;
+        }
+        std::println("{} {} -> {}...", tool, version, *latest);
+        auto info = registry::resolve(tool, *latest);
+        if (!installer::install(info)) {
+            std::println(std::cerr, "error: failed to upgrade {}", tool);
+            continue;
+        }
+        config::set_default(tool, *latest);
+        ++upgraded;
+    }
+
+    if (upgraded > 0) {
+        std::println("");
+        std::println("Upgraded {} tool{}", upgraded, upgraded == 1 ? "" : "s");
+    }
+    return 0;
+}
+
 int cmd_self_update(std::string_view self_path) {
-    constexpr auto current_version = "0.4.0";
+    auto current_version = intron_version;
 
     std::println("Checking for updates...");
     auto latest = installer::latest_version("intron");
@@ -320,6 +383,7 @@ int main(int argc, char* argv[]) {
         if (command == "which")   return cmd_which(argc, argv);
         if (command == "default") return cmd_default(argc, argv);
         if (command == "update")  return cmd_update();
+        if (command == "upgrade") return cmd_upgrade(argc, argv);
         if (command == "env")     return cmd_env();
         if (command == "self-update") return cmd_self_update(argv[0]);
         if (command == "help" || command == "--help" || command == "-h") {
