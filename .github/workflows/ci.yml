@@ -17,7 +17,7 @@ jobs:
 
       - name: Install exon
         run: |
-          gh release download v0.1.0 -R misut/exon -p 'exon-*-aarch64-apple-darwin.tar.gz'
+          gh release download v0.2.0 -R misut/exon -p 'exon-*-aarch64-apple-darwin.tar.gz'
           tar xzf exon-*.tar.gz
           sudo mv exon /usr/local/bin/
           rm exon-*.tar.gz
@@ -28,6 +28,11 @@ jobs:
         run: |
           export PATH="$(brew --prefix llvm)/bin:$PATH"
           exon build
+
+      - name: Test
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          exon test
 
       - name: Verify
         run: .exon/debug/intron help
