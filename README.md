@@ -2,6 +2,14 @@
 
 A toolchain manager for C++. Inspired by rustup.
 
+## Supported Platforms
+
+| Platform | Status |
+|----------|--------|
+| macOS ARM64 (Apple Silicon) | Supported |
+| Linux x86_64 | Supported |
+| Linux ARM64 | Supported |
+
 ## Installation
 
 ### Script
@@ -14,15 +22,16 @@ curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
 
 ```sh
 mise plugin add intron https://github.com/misut/mise-intron.git
-mise install intron@0.0.0
-mise use intron@0.0.0
+mise install intron@latest
+mise use intron@latest
 ```
 
 ### Build from source
 
-Requires [Homebrew LLVM](https://formulae.brew.sh/formula/llvm) and [exon](https://github.com/misut/exon).
+Requires [Homebrew LLVM](https://formulae.brew.sh/formula/llvm) (macOS) or LLVM 20+ (Linux) and [exon](https://github.com/misut/exon).
 
 ```sh
+# macOS
 brew install llvm
 git clone git@github.com:misut/intron.git
 cd intron
@@ -39,15 +48,8 @@ intron install llvm 22.1.2
 intron install cmake 4.3.1
 intron install ninja 1.12.1
 intron default llvm 22.1.2
-intron which clang++
-```
-
-```
-Installed llvm 22.1.2 to ~/.intron/toolchains/llvm/22.1.2
-Installed cmake 4.3.1 to ~/.intron/toolchains/cmake/4.3.1
-Installed ninja 1.12.1 to ~/.intron/toolchains/ninja/1.12.1
-Set llvm default to 22.1.2
-/Users/you/.intron/toolchains/llvm/22.1.2/bin/clang++
+eval "$(intron env)"
+clang++ --version
 ```
 
 ## Commands
@@ -59,6 +61,9 @@ Set llvm default to 22.1.2
 | `intron list` | List installed toolchains |
 | `intron which <binary>` | Print absolute path to a binary |
 | `intron default <tool> <version>` | Set default version |
+| `intron env` | Print environment variables (`eval "$(intron env)"`) |
+| `intron update` | Check for newer versions |
+| `intron self-update` | Update intron itself |
 | `intron help` | Show usage information |
 
 ## Supported Tools
@@ -69,11 +74,25 @@ Set llvm default to 22.1.2
 | CMake | [Kitware/CMake](https://github.com/Kitware/CMake/releases) | cmake, ctest, cpack |
 | Ninja | [ninja-build/ninja](https://github.com/ninja-build/ninja/releases) | ninja |
 
+## Project Configuration
+
+Create `.intron.toml` in your project root to pin toolchain versions:
+
+```toml
+[toolchain]
+llvm = "22.1.2"
+cmake = "4.3.1"
+ninja = "1.12.1"
+```
+
+Project config overrides global defaults for `which`, `env`, `list`, and `update`.
+
 ## Directory Layout
 
 ```
 ~/.intron/
 ├── config.toml                     # default versions
+├── downloads/                      # cached archives
 └── toolchains/
     ├── llvm/22.1.2/bin/clang++
     ├── cmake/4.3.1/bin/cmake
