@@ -18,13 +18,10 @@ jobs:
           - os: ubuntu-24.04
             platform: x86_64-linux-gnu
             build: cmake
-            experimental: true
           - os: ubuntu-24.04-arm
             platform: aarch64-linux-gnu
             build: cmake
-            experimental: true
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@v4
 
@@ -61,18 +58,15 @@ jobs:
             LINKER_FLAGS="-L$LLVM_PREFIX/lib/c++ -lc++ -L$LLVM_PREFIX/lib/unwind -lunwind"
           else
             CXX=clang++-20
-            MODULES_JSON=$(find /usr/lib/llvm-20 -name 'libc++.modules.json' 2>/dev/null | head -1)
-            if [ -z "$MODULES_JSON" ]; then
-              echo "error: libc++.modules.json not found"
-              find /usr/lib/llvm-20 -name '*.json' 2>/dev/null
-              exit 1
-            fi
-            LINKER_FLAGS=""
+            MODULES_JSON=/usr/lib/llvm-20/lib/libc++.modules.json
+            CXX_FLAGS="-stdlib=libc++"
+            LINKER_FLAGS="-stdlib=libc++ -lc++abi"
           fi
           cmake -B build -S .github/cmake -G Ninja \
             -DTOMLCPP_DIR=/tmp/tomlcpp \
             -DCMAKE_CXX_COMPILER="$CXX" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON="$MODULES_JSON" \
+            -DCMAKE_CXX_FLAGS="${CXX_FLAGS:-}" \
             -DCMAKE_EXE_LINKER_FLAGS="$LINKER_FLAGS"
           cmake --build build
           mkdir -p .exon/debug && cp build/intron .exon/debug/intron
