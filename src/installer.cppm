@@ -253,31 +253,79 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::create_directories(dest.parent_path());
     std::filesystem::rename(staging, dest);
 
-    // Generate clang config + wrapper scripts after LLVM install (macOS only)
-    if (info.name == "llvm" && registry::detect_platform().os == registry::OS::macOS) {
+    // Generate clang config + wrapper scripts after LLVM install
+    if (info.name == "llvm") {
+        auto plat = registry::detect_platform();
         auto clang = dest / "bin" / "clang";
         auto target = detail::capture(std::format("'{}' -dumpmachine", clang.string()));
-        auto sdk_path = detail::capture("xcrun --show-sdk-path");
-        if (!target.empty() && !sdk_path.empty()) {
-            auto cfg_target = target;
-            auto darwin_pos = cfg_target.find("darwin");
-            if (darwin_pos != std::string::npos) {
-                auto ver_start = darwin_pos + 6;
-                auto dot = cfg_target.find('.', ver_start);
-                if (dot != std::string::npos) {
-                    cfg_target = cfg_target.substr(0, dot);
+
+        if (plat.os == registry::OS::macOS) {
+            auto sdk_path = detail::capture("xcrun --show-sdk-path");
+            if (!target.empty() && !sdk_path.empty()) {
+                auto cfg_target = target;
+                auto darwin_pos = cfg_target.find("darwin");
+                if (darwin_pos != std::string::npos) {
+                    auto ver_start = darwin_pos + 6;
+                    auto dot = cfg_target.find('.', ver_start);
+                    if (dot != std::string::npos) {
+                        cfg_target = cfg_target.substr(0, dot);
+                    }
                 }
+
+                auto cfg_dir = dest / "etc" / "clang";
+                std::filesystem::create_directories(cfg_dir);
+                auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
+                {
+                    auto out = std::ofstream{cfg_file};
+                    if (out) {
+                        out << std::format("-isysroot {}\n", sdk_path);
+                        out << "-stdlib=libc++\n";
+                        out << "-lc++\n";
+                    }
+                }
+
+                auto bin_dir = dest / "bin";
+                auto cfg_flag = std::format("--config-system-dir={}", cfg_dir.string());
+                for (auto name : {"clang", "clang++"}) {
+                    auto orig = bin_dir / name;
+                    auto backup = bin_dir / std::format("{}.orig", name);
+                    if (std::filesystem::exists(orig) && !std::filesystem::exists(backup)) {
+                        std::filesystem::rename(orig, backup);
+                        auto out = std::ofstream{orig};
+                        if (out) {
+                            out << "#!/bin/sh\n";
+                            out << std::format("exec \"{}\" {} \"$@\"\n",
+                                backup.string(), cfg_flag);
+                        }
+                        std::filesystem::permissions(orig,
+                            std::filesystem::perms::owner_exec |
+                            std::filesystem::perms::group_exec |
+                            std::filesystem::perms::others_exec,
+                            std::filesystem::perm_options::add);
+                    }
+                }
+
+                std::println("Generated clang config: {}", cfg_file.string());
+            }
+        } else if (plat.os == registry::OS::Linux && !target.empty()) {
+            // Find libc++ directory (may be in lib/ or lib/<triple>/)
+            auto lib_dir = dest / "lib" / target;
+            if (!std::filesystem::exists(lib_dir / "libc++.so") &&
+                !std::filesystem::exists(lib_dir / "libc++.a")) {
+                lib_dir = dest / "lib";
             }
 
             auto cfg_dir = dest / "etc" / "clang";
             std::filesystem::create_directories(cfg_dir);
-            auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
+            auto cfg_file = cfg_dir / std::format("{}.cfg", target);
             {
                 auto out = std::ofstream{cfg_file};
                 if (out) {
-                    out << std::format("-isysroot {}\n", sdk_path);
                     out << "-stdlib=libc++\n";
                     out << "-lc++\n";
+                    out << "-lc++abi\n";
+                    out << std::format("-L{}\n", lib_dir.string());
+                    out << std::format("-Wl,-rpath,{}\n", lib_dir.string());
                 }
             }
 

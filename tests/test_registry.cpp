@@ -33,6 +33,18 @@ void test_resolve_cmake() {
 }
 
 void test_resolve_ninja() {
+    auto plat = registry::detect_platform();
+    if (plat.os == registry::OS::Linux && plat.arch == registry::Arch::ARM64) {
+        // ARM64 Linux: should throw (no official binaries)
+        bool threw = false;
+        try {
+            registry::resolve("ninja", "1.12.1");
+        } catch (std::runtime_error const&) {
+            threw = true;
+        }
+        check(threw, "ninja ARM64 Linux throws");
+        return;
+    }
     auto info = registry::resolve("ninja", "1.12.1");
     check(info.name == "ninja", "ninja name");
     check(info.version == "1.12.1", "ninja version");
