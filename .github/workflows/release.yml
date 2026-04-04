@@ -9,31 +9,77 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            platform: aarch64-apple-darwin
+            build: exon
+          - os: ubuntu-24.04
+            platform: x86_64-linux-gnu
+            build: cmake
+          - os: ubuntu-24.04-arm
+            platform: aarch64-linux-gnu
+            build: cmake
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
         run: brew install llvm ninja
 
-      - name: Install exon
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 20
+          sudo apt-get install -y libc++-20-dev libc++abi-20-dev ninja-build
+          pip install cmake --break-system-packages
+
+      - name: Build with exon
+        if: matrix.build == 'exon'
         run: |
           gh release download v0.2.0 -R misut/exon -p 'exon-*-aarch64-apple-darwin.tar.gz'
-          tar xzf exon-*.tar.gz
-          sudo mv exon /usr/local/bin/
-          rm exon-*.tar.gz
+          tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          exon build --release
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Build
+      - name: Build with cmake
+        if: matrix.build == 'cmake'
         run: |
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
-          exon build --release
+          git clone https://github.com/misut/tomlcpp.git /tmp/tomlcpp
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            LLVM_PREFIX=$(brew --prefix llvm)
+            CXX="$LLVM_PREFIX/bin/clang++"
+            MODULES_JSON="$LLVM_PREFIX/lib/c++/libc++.modules.json"
+            LINKER_FLAGS="-L$LLVM_PREFIX/lib/c++ -lc++ -L$LLVM_PREFIX/lib/unwind -lunwind"
+          else
+            CXX=clang++-20
+            MODULES_JSON=$(find /usr/lib/llvm-20 -name 'libc++.modules.json' 2>/dev/null | head -1)
+            if [ -z "$MODULES_JSON" ]; then
+              echo "error: libc++.modules.json not found"
+              find /usr/lib/llvm-20 -name '*.json' 2>/dev/null
+              exit 1
+            fi
+            LINKER_FLAGS=""
+          fi
+          cmake -B build -S .github/cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTOMLCPP_DIR=/tmp/tomlcpp \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON="$MODULES_JSON" \
+            -DCMAKE_EXE_LINKER_FLAGS="$LINKER_FLAGS"
+          cmake --build build
 
       - name: Package
         run: |
-          tar -czf intron-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz \
-            -C .exon/release intron
+          if [ "${{ matrix.build }}" = "exon" ]; then
+            tar -czf intron-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz -C .exon/release intron
+          else
+            tar -czf intron-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz -C build intron
+          fi
 
       - name: Release
         uses: softprops/action-gh-release@v2

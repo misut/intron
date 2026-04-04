@@ -194,9 +194,10 @@ int cmd_self_update(std::string_view self_path) {
     auto tmp = std::filesystem::temp_directory_path() / "intron-update";
     std::filesystem::create_directories(tmp);
     auto archive = tmp / "intron.tar.gz";
+    auto triple = registry::platform_triple();
     auto url = std::format(
-        "https://github.com/misut/intron/releases/download/v{}/intron-v{}-aarch64-apple-darwin.tar.gz",
-        *latest, *latest);
+        "https://github.com/misut/intron/releases/download/v{}/intron-v{}-{}.tar.gz",
+        *latest, *latest, triple);
     auto dl_cmd = std::format("curl -fsSL -o '{}' '{}'", archive.string(), url);
     if (std::system(dl_cmd.c_str()) != 0) {
         std::println(std::cerr, "error: download failed");

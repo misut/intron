@@ -189,8 +189,8 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::create_directories(dest.parent_path());
     std::filesystem::rename(staging, dest);
 
-    // LLVM 설치 후 clang config 생성 + wrapper 설치
-    if (info.name == "llvm") {
+    // LLVM 설치 후 clang config 생성 + wrapper 설치 (macOS 전용)
+    if (info.name == "llvm" && registry::detect_platform().os == registry::OS::macOS) {
         auto clang = dest / "bin" / "clang";
         auto target = detail::capture(std::format("'{}' -dumpmachine", clang.string()));
         auto sdk_path = detail::capture("xcrun --show-sdk-path");
