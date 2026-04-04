@@ -29,13 +29,15 @@ mise use intron@latest
 
 ### Build from source
 
-Requires LLVM with libc++ module support and [exon](https://github.com/misut/exon).
+Requires [intron](https://github.com/misut/intron) (for LLVM toolchain) and [exon](https://github.com/misut/exon).
 
 ```sh
 # macOS
-brew install llvm
 git clone git@github.com:misut/intron.git && cd intron
-export PATH="$(brew --prefix llvm)/bin:$PATH"
+intron install llvm 22.1.2
+intron install cmake 4.3.1
+intron install ninja 1.13.2
+eval "$(intron env)"
 exon build --release
 
 # Linux (Ubuntu 24.04)
