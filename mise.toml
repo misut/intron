@@ -1,3 +1,7 @@
 [tools]
-intron = "latest"
-exon = "latest"
+exon = "0.2.0"
+cmake = "latest"
+ninja = "latest"
+
+[env]
+_.path = ["/opt/homebrew/Cellar/llvm/22.1.2/bin"]
