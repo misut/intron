@@ -6,6 +6,9 @@ export namespace config {
 
 std::filesystem::path config_path() {
     auto home = std::getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = std::getenv("USERPROFILE");
+#endif
     if (!home) {
         throw std::runtime_error("HOME environment variable not set");
     }
@@ -31,7 +34,7 @@ std::map<std::string, std::string> load_defaults() {
     return defaults;
 }
 
-// 현재 디렉토리부터 상위로 .intron.toml 탐색
+// Search for .intron.toml from current directory upward
 std::optional<std::filesystem::path> find_project_config() {
     auto dir = std::filesystem::current_path();
     while (true) {
@@ -46,7 +49,7 @@ std::optional<std::filesystem::path> find_project_config() {
     return std::nullopt;
 }
 
-// 프로젝트 설정의 [toolchain] 섹션 로드
+// Load [toolchain] section from project config
 std::map<std::string, std::string> load_project_toolchain() {
     std::map<std::string, std::string> result;
     auto path = find_project_config();
@@ -64,15 +67,15 @@ std::map<std::string, std::string> load_project_toolchain() {
     return result;
 }
 
-// 프로젝트 설정 > 글로벌 defaults 순으로 조회
+// Look up: project config > global defaults
 std::optional<std::string> get_default(std::string_view tool) {
-    // 프로젝트 설정 우선
+    // Project config takes priority
     auto project = load_project_toolchain();
     auto it = project.find(std::string{tool});
     if (it != project.end()) {
         return it->second;
     }
-    // 글로벌 defaults
+    // Global defaults
     auto defaults = load_defaults();
     auto it2 = defaults.find(std::string{tool});
     if (it2 != defaults.end()) {
@@ -81,7 +84,7 @@ std::optional<std::string> get_default(std::string_view tool) {
     return std::nullopt;
 }
 
-// 프로젝트 + 글로벌 병합 (프로젝트 우선)
+// Merge project + global defaults (project takes priority)
 std::map<std::string, std::string> load_effective_defaults() {
     auto defaults = load_defaults();
     auto project = load_project_toolchain();

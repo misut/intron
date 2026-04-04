@@ -6,6 +6,9 @@ export namespace installer {
 
 std::filesystem::path intron_home() {
     auto home = std::getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = std::getenv("USERPROFILE");
+#endif
     if (!home) {
         throw std::runtime_error("HOME environment variable not set");
     }
@@ -20,36 +23,71 @@ std::filesystem::path toolchain_path(std::string_view tool, std::string_view ver
 
 namespace detail {
 
+constexpr bool is_windows =
+#ifdef _WIN32
+    true;
+#else
+    false;
+#endif
+
 int run(std::string const& cmd) {
     return std::system(cmd.c_str());
 }
 
 std::string capture(std::string const& cmd) {
     auto tmp = std::filesystem::temp_directory_path() / "intron_capture.tmp";
-    auto full_cmd = std::format("{} > '{}' 2>/dev/null", cmd, tmp.string());
+    std::string full_cmd;
+    if constexpr (is_windows) {
+        full_cmd = std::format("{} > \"{}\" 2>nul", cmd, tmp.string());
+    } else {
+        full_cmd = std::format("{} > '{}' 2>/dev/null", cmd, tmp.string());
+    }
     if (std::system(full_cmd.c_str()) != 0) return {};
     auto in = std::ifstream{tmp};
     auto result = std::string{
         std::istreambuf_iterator<char>{in},
         std::istreambuf_iterator<char>{}};
     std::filesystem::remove(tmp);
-    while (!result.empty() && result.back() == '\n') {
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
         result.pop_back();
     }
     return result;
 }
 
-// 디렉토리 내의 모든 항목을 대상 경로로 이동
-void move_contents(std::filesystem::path const& src, std::filesystem::path const& dst) {
-    std::filesystem::create_directories(dst);
-    for (auto const& entry : std::filesystem::directory_iterator{src}) {
-        auto target = dst / entry.path().filename();
-        std::filesystem::rename(entry.path(), target);
+bool check_command(std::string_view name) {
+    if constexpr (is_windows) {
+        return run(std::format("where {} >nul 2>nul", name)) == 0;
+    } else {
+        return run(std::format("command -v '{}' >/dev/null 2>&1", name)) == 0;
     }
 }
 
-bool check_command(std::string_view name) {
-    return run(std::format("command -v '{}' >/dev/null 2>&1", name)) == 0;
+std::string sha256_command(std::filesystem::path const& file) {
+    if constexpr (is_windows) {
+        return std::format("certutil -hashfile \"{}\" SHA256", file.string());
+    } else {
+        return std::format("shasum -a 256 '{}'", file.string());
+    }
+}
+
+std::string parse_sha256(std::string const& output) {
+    if constexpr (is_windows) {
+        // certutil output: 1st line header, 2nd line hash, 3rd line footer
+        auto first_nl = output.find('\n');
+        if (first_nl == std::string::npos) return {};
+        auto start = first_nl + 1;
+        auto end = output.find('\n', start);
+        if (end == std::string::npos) end = output.size();
+        auto hash = output.substr(start, end - start);
+        // Remove spaces
+        std::erase(hash, ' ');
+        std::erase(hash, '\r');
+        // Convert to lowercase
+        for (auto& c : hash) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return hash;
+    } else {
+        return output.substr(0, output.find(' '));
+    }
 }
 
 } // namespace detail
@@ -57,19 +95,15 @@ bool check_command(std::string_view name) {
 bool install(registry::ToolInfo const& info) {
     auto dest = toolchain_path(info.name, info.version);
 
-    // 이미 설치됨
+    // Already installed
     if (std::filesystem::exists(dest) && !std::filesystem::is_empty(dest)) {
         std::println("{} {} is already installed", info.name, info.version);
         return true;
     }
 
-    // 시스템 도구 사전 확인
+    // Preflight check for system tools
     if (!detail::check_command("curl")) {
         std::println(std::cerr, "error: curl is required but not found");
-        return false;
-    }
-    if (info.archive_type == "zip" && !detail::check_command("unzip")) {
-        std::println(std::cerr, "error: unzip is required but not found");
         return false;
     }
     if ((info.archive_type == "tar.xz" || info.archive_type == "tar.gz")
@@ -77,17 +111,23 @@ bool install(registry::ToolInfo const& info) {
         std::println(std::cerr, "error: tar is required but not found");
         return false;
     }
+    if constexpr (!detail::is_windows) {
+        if (info.archive_type == "zip" && !detail::check_command("unzip")) {
+            std::println(std::cerr, "error: unzip is required but not found");
+            return false;
+        }
+    }
 
     auto downloads = intron_home() / "downloads";
     std::filesystem::create_directories(downloads);
 
-    // 아카이브 파일명 추출
+    // Extract archive filename from URL
     auto url_sv = std::string_view{info.url};
     auto slash = url_sv.rfind('/');
     auto archive_name = std::string{url_sv.substr(slash + 1)};
     auto archive_path = downloads / archive_name;
 
-    // 실패 시 자동 정리를 위한 guard
+    // Cleanup guard on failure
     bool success = false;
     auto cleanup = [&] {
         if (!success) {
@@ -95,13 +135,19 @@ bool install(registry::ToolInfo const& info) {
         }
     };
 
-    // 다운로드 (캐시된 아카이브가 있으면 재사용)
+    // Download (reuse cached archive if available)
     if (std::filesystem::exists(archive_path)) {
         std::println("Using cached archive for {} {}...", info.name, info.version);
     } else {
         std::println("Downloading {} {}...", info.name, info.version);
-        auto curl_cmd = std::format("curl -fSL --compressed -o '{}' '{}'",
-            archive_path.string(), info.url);
+        std::string curl_cmd;
+        if constexpr (detail::is_windows) {
+            curl_cmd = std::format("curl -fSL --compressed -o \"{}\" \"{}\"",
+                archive_path.string(), info.url);
+        } else {
+            curl_cmd = std::format("curl -fSL --compressed -o '{}' '{}'",
+                archive_path.string(), info.url);
+        }
         if (detail::run(curl_cmd) != 0) {
             std::println(std::cerr, "error: download failed");
             std::filesystem::remove(archive_path);
@@ -110,16 +156,21 @@ bool install(registry::ToolInfo const& info) {
         }
     }
 
-    // 체크섬 검증
+    // Checksum verification
     if (!info.checksum_url.empty()) {
         std::println("Verifying checksum...");
         auto checksum_file = downloads / "checksums.txt";
-        auto dl_cmd = std::format("curl -fsSL --compressed -o '{}' '{}'",
-            checksum_file.string(), info.checksum_url);
+        std::string dl_cmd;
+        if constexpr (detail::is_windows) {
+            dl_cmd = std::format("curl -fsSL --compressed -o \"{}\" \"{}\"",
+                checksum_file.string(), info.checksum_url);
+        } else {
+            dl_cmd = std::format("curl -fsSL --compressed -o '{}' '{}'",
+                checksum_file.string(), info.checksum_url);
+        }
         if (detail::run(dl_cmd) == 0) {
-            auto actual = detail::capture(
-                std::format("shasum -a 256 '{}'", archive_path.string()));
-            auto actual_hash = actual.substr(0, actual.find(' '));
+            auto raw = detail::capture(detail::sha256_command(archive_path));
+            auto actual_hash = detail::parse_sha256(raw);
 
             auto in = std::ifstream{checksum_file};
             std::string line;
@@ -150,14 +201,13 @@ bool install(registry::ToolInfo const& info) {
         }
     }
 
-    // staging 디렉토리에 압축 해제 (원자적 설치: staging → rename)
+    // Extract to staging directory (atomic install: staging → rename)
     auto staging = intron_home() / "staging" / std::format("{}-{}", info.name, info.version);
     std::filesystem::create_directories(staging);
 
     std::println("Extracting...");
     int extract_status = 0;
     if (info.archive_type == "tar.xz" || info.archive_type == "tar.gz") {
-        // --strip-components로 strip_prefix를 tar 레벨에서 처리
         int depth = 0;
         if (!info.strip_prefix.empty()) {
             depth = 1;
@@ -165,12 +215,26 @@ bool install(registry::ToolInfo const& info) {
                 if (c == '/') ++depth;
             }
         }
-        extract_status = detail::run(
-            std::format("tar xf '{}' --strip-components={} -C '{}'",
-                archive_path.string(), depth, staging.string()));
+        if constexpr (detail::is_windows) {
+            extract_status = detail::run(
+                std::format("tar xf \"{}\" --strip-components={} -C \"{}\"",
+                    archive_path.string(), depth, staging.string()));
+        } else {
+            extract_status = detail::run(
+                std::format("tar xf '{}' --strip-components={} -C '{}'",
+                    archive_path.string(), depth, staging.string()));
+        }
     } else if (info.archive_type == "zip") {
-        extract_status = detail::run(
-            std::format("unzip -qo '{}' -d '{}'", archive_path.string(), staging.string()));
+        if constexpr (detail::is_windows) {
+            // Windows: tar can handle zip files too
+            extract_status = detail::run(
+                std::format("tar xf \"{}\" -C \"{}\"",
+                    archive_path.string(), staging.string()));
+        } else {
+            extract_status = detail::run(
+                std::format("unzip -qo '{}' -d '{}'",
+                    archive_path.string(), staging.string()));
+        }
     } else {
         std::println(std::cerr, "error: unknown archive type: {}", info.archive_type);
         std::filesystem::remove_all(staging);
@@ -185,18 +249,16 @@ bool install(registry::ToolInfo const& info) {
         return false;
     }
 
-    // 원자적으로 최종 경로에 배치
+    // Atomically place at final destination
     std::filesystem::create_directories(dest.parent_path());
     std::filesystem::rename(staging, dest);
 
-    // LLVM 설치 후 clang config 생성 + wrapper 설치 (macOS 전용)
+    // Generate clang config + wrapper scripts after LLVM install (macOS only)
     if (info.name == "llvm" && registry::detect_platform().os == registry::OS::macOS) {
         auto clang = dest / "bin" / "clang";
         auto target = detail::capture(std::format("'{}' -dumpmachine", clang.string()));
         auto sdk_path = detail::capture("xcrun --show-sdk-path");
         if (!target.empty() && !sdk_path.empty()) {
-            // target에서 OS major 버전만 남김
-            // arm64-apple-darwin25.3.0 → arm64-apple-darwin25
             auto cfg_target = target;
             auto darwin_pos = cfg_target.find("darwin");
             if (darwin_pos != std::string::npos) {
@@ -207,7 +269,6 @@ bool install(registry::ToolInfo const& info) {
                 }
             }
 
-            // config file 생성
             auto cfg_dir = dest / "etc" / "clang";
             std::filesystem::create_directories(cfg_dir);
             auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
@@ -220,7 +281,6 @@ bool install(registry::ToolInfo const& info) {
                 }
             }
 
-            // 원본 바이너리를 .orig로 이동하고 wrapper 생성
             auto bin_dir = dest / "bin";
             auto cfg_flag = std::format("--config-system-dir={}", cfg_dir.string());
             for (auto name : {"clang", "clang++"}) {
@@ -284,7 +344,6 @@ std::optional<std::filesystem::path> which(
     std::string_view binary, std::string_view tool, std::string_view version)
 {
     auto base = toolchain_path(tool, version);
-    // ninja는 bin/ 서브디렉토리가 없음
     auto path = (tool == "ninja")
         ? base / binary
         : base / "bin" / binary;
@@ -292,16 +351,28 @@ std::optional<std::filesystem::path> which(
     if (std::filesystem::exists(path)) {
         return path;
     }
+#ifdef _WIN32
+    // Windows: try with .exe extension
+    auto exe_path = path;
+    exe_path += ".exe";
+    if (std::filesystem::exists(exe_path)) {
+        return exe_path;
+    }
+#endif
     return std::nullopt;
 }
 
 std::optional<std::string> latest_version(std::string_view tool) {
     auto api_url = registry::latest_release_api(tool);
-    auto json = detail::capture(
-        std::format("curl -fsSL '{}'", api_url));
+    std::string curl_cmd;
+    if constexpr (detail::is_windows) {
+        curl_cmd = std::format("curl -fsSL \"{}\"", api_url);
+    } else {
+        curl_cmd = std::format("curl -fsSL '{}'", api_url);
+    }
+    auto json = detail::capture(curl_cmd);
     if (json.empty()) return std::nullopt;
 
-    // "tag_name": "v1.2.3" 또는 "tag_name": "llvmorg-22.1.2" 에서 버전 추출
     auto pos = json.find("\"tag_name\"");
     if (pos == std::string::npos) return std::nullopt;
     auto colon = json.find(':', pos);
@@ -311,7 +382,6 @@ std::optional<std::string> latest_version(std::string_view tool) {
 
     auto tag = json.substr(quote1 + 1, quote2 - quote1 - 1);
 
-    // 태그에서 버전만 추출: "v1.2.3" → "1.2.3", "llvmorg-22.1.2" → "22.1.2"
     if (tag.starts_with("v")) {
         return tag.substr(1);
     }
