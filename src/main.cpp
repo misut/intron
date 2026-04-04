@@ -24,7 +24,10 @@ std::optional<std::string> tool_for_binary(std::string_view binary) {
     return std::nullopt;
 }
 
-constexpr auto intron_version = "0.9.0";
+#ifndef EXON_PKG_VERSION
+#define EXON_PKG_VERSION "dev"
+#endif
+constexpr auto intron_version = EXON_PKG_VERSION;
 
 void print_usage() {
     std::println("intron {}", intron_version);
