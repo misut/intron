@@ -122,4 +122,13 @@ std::string latest_release_api(std::string_view tool) {
 
 constexpr std::array<std::string_view, 3> supported_tools = {"cmake", "llvm", "ninja"};
 
+// 릴리즈 바이너리 플랫폼 triple
+std::string platform_triple() {
+    auto plat = detect_platform();
+    if (plat.os == OS::macOS) {
+        return plat.arch == Arch::ARM64 ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+    }
+    return plat.arch == Arch::ARM64 ? "aarch64-linux-gnu" : "x86_64-linux-gnu";
+}
+
 } // namespace registry

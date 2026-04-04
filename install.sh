@@ -8,13 +8,16 @@ INSTALL_DIR="$HOME/.intron/bin"
 OS=$(uname -s)
 ARCH=$(uname -m)
 
-if [ "$OS" != "Darwin" ] || [ "$ARCH" != "arm64" ]; then
-    echo "error: only macOS ARM (Apple Silicon) is currently supported"
-    echo "  detected: $OS $ARCH"
-    exit 1
-fi
-
-PLATFORM="aarch64-apple-darwin"
+case "$OS:$ARCH" in
+    Darwin:arm64)   PLATFORM="aarch64-apple-darwin" ;;
+    Darwin:x86_64)  PLATFORM="x86_64-apple-darwin" ;;
+    Linux:aarch64)  PLATFORM="aarch64-linux-gnu" ;;
+    Linux:x86_64)   PLATFORM="x86_64-linux-gnu" ;;
+    *)
+        echo "error: unsupported platform: $OS $ARCH"
+        exit 1
+        ;;
+esac
 
 # Get latest release tag
 echo "fetching latest release..."
@@ -25,7 +28,7 @@ if [ -z "$TAG" ]; then
     exit 1
 fi
 
-echo "installing intron $TAG..."
+echo "installing intron $TAG for $PLATFORM..."
 
 # Download
 URL="https://github.com/$REPO/releases/download/$TAG/intron-$TAG-$PLATFORM.tar.gz"
