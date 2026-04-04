@@ -23,22 +23,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Bootstrap intron (macOS)
+      - name: Install intron (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm
           gh release download -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
-          tar xzf intron-*.tar.gz && rm intron-*.tar.gz
-          export PATH="$(brew --prefix llvm)/lib/c++:$PATH"
-          ./intron install llvm 22.1.2
-          ./intron install cmake 4.3.1
-          ./intron install ninja 1.13.2
-          ./intron default llvm 22.1.2
-          ./intron default cmake 4.3.1
-          ./intron default ninja 1.13.2
-          sudo mv intron /usr/local/bin/
+          tar xzf intron-*.tar.gz && sudo mv intron /usr/local/bin/ && rm intron-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Install toolchains (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          intron install llvm 22.1.2
+          intron install cmake 4.3.1
+          intron install ninja 1.13.2
+          intron default llvm 22.1.2
+          intron default cmake 4.3.1
+          intron default ninja 1.13.2
+
+      - name: Bootstrap exon (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          eval "$(intron env)"
+          LLVM_ROOT="$HOME/.intron/toolchains/llvm/22.1.2"
+          MODULES_JSON=$(find "$LLVM_ROOT" -name "libc++.modules.json" -print -quit)
+          SYSROOT=$(xcrun --show-sdk-path)
+          git clone --depth 1 --branch v0.7.1 https://github.com/misut/exon.git /tmp/exon
+          git clone https://github.com/misut/tomlcpp.git /tmp/tomlcpp
+          CMAKE_ARGS="-Wno-dev -B /tmp/exon-build -S /tmp/exon/.github/cmake -G Ninja"
+          CMAKE_ARGS="$CMAKE_ARGS -DTOMLCPP_DIR=/tmp/tomlcpp"
+          CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_CXX_COMPILER=$LLVM_ROOT/bin/clang++"
+          CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_OSX_SYSROOT=$SYSROOT"
+          if [ -n "$MODULES_JSON" ]; then
+            CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_CXX_STDLIB_MODULES_JSON=$MODULES_JSON"
+          fi
+          eval cmake $CMAKE_ARGS
+          cmake --build /tmp/exon-build
+          sudo cp /tmp/exon-build/exon /usr/local/bin/
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -47,7 +68,8 @@ jobs:
           sudo apt-get install -y libc++-20-dev libc++abi-20-dev ninja-build
           pip install cmake --break-system-packages
 
-      - name: Install exon
+      - name: Install exon (Linux)
+        if: runner.os == 'Linux'
         run: |
           gh release download v0.7.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
           tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
@@ -65,7 +87,23 @@ jobs:
 
       - name: Package
         run: |
-          tar -czf intron-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz -C .exon/release intron
+          tar -czf intron-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz \
+            -C .exon/release intron
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: intron-${{ matrix.platform }}
+          path: intron-*.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
 
       - name: Release
         uses: softprops/action-gh-release@v2
