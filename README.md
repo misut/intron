@@ -9,13 +9,20 @@ A toolchain manager for C++. Inspired by rustup.
 | macOS ARM64 (Apple Silicon) | Supported |
 | Linux x86_64 | Supported |
 | Linux ARM64 | Supported |
+| Windows x86_64 | Supported |
 
 ## Installation
 
-### Script
+### Script (macOS/Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
+```
+
+### Script (Windows PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
 ```
 
 ### mise

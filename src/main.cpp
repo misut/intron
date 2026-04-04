@@ -4,16 +4,16 @@ import config;
 
 namespace {
 
-// binary 이름으로 어떤 tool에 속하는지 판별
+// Map binary name to its parent tool
 std::optional<std::string> tool_for_binary(std::string_view binary) {
-    // LLVM 바이너리
+    // LLVM binaries
     if (binary.starts_with("clang") || binary.starts_with("llvm-") ||
         binary.starts_with("lldb") || binary.starts_with("lld") ||
         binary == "ld.lld" || binary == "ld64.lld" ||
         binary == "wasm-ld" || binary == "dsymutil") {
         return "llvm";
     }
-    // CMake 바이너리
+    // CMake binaries
     if (binary == "cmake" || binary == "ctest" || binary == "cpack" || binary == "ccmake") {
         return "cmake";
     }
@@ -110,7 +110,7 @@ int cmd_default(int argc, char* argv[]) {
     auto tool = std::string_view{argv[2]};
     auto version = std::string_view{argv[3]};
 
-    // 설치 여부 확인
+    // Check if installed
     auto path = installer::toolchain_path(tool, version);
     if (!std::filesystem::exists(path)) {
         std::println(std::cerr, "error: {} {} is not installed", tool, version);
@@ -127,7 +127,7 @@ int cmd_update() {
     auto installed = installer::list_installed();
     auto defaults = config::load_effective_defaults();
 
-    // 설치된 도구 + default 도구의 합집합
+    // Union of installed tools and default tools
     std::map<std::string, std::string> current;
     for (auto const& [tool, version] : installed) {
         if (!current.contains(tool)) {
@@ -141,7 +141,7 @@ int cmd_update() {
     }
 
     if (current.empty()) {
-        // 설치된 게 없으면 모든 도구의 최신 버전 표시
+        // Show latest versions for all tools if none installed
         for (auto tool : registry::supported_tools) {
             auto latest = installer::latest_version(tool);
             if (latest) {
@@ -174,10 +174,8 @@ int cmd_update() {
 }
 
 int cmd_self_update(std::string_view self_path) {
-    // 현재 버전
-    constexpr auto current_version = "0.2.1";
+    constexpr auto current_version = "0.4.0";
 
-    // 최신 버전 확인
     std::println("Checking for updates...");
     auto latest = installer::latest_version("intron");
     if (!latest) {
@@ -190,32 +188,55 @@ int cmd_self_update(std::string_view self_path) {
     }
     std::println("Updating intron {} -> {}...", current_version, *latest);
 
-    // 다운로드
     auto tmp = std::filesystem::temp_directory_path() / "intron-update";
     std::filesystem::create_directories(tmp);
-    auto archive = tmp / "intron.tar.gz";
     auto triple = registry::platform_triple();
+
+#ifdef _WIN32
+    auto ext = ".zip";
+#else
+    auto ext = ".tar.gz";
+#endif
+    auto archive = tmp / std::format("intron{}", ext);
     auto url = std::format(
-        "https://github.com/misut/intron/releases/download/v{}/intron-v{}-{}.tar.gz",
-        *latest, *latest, triple);
+        "https://github.com/misut/intron/releases/download/v{}/intron-v{}-{}{}",
+        *latest, *latest, triple, ext);
+
+#ifdef _WIN32
+    auto dl_cmd = std::format("curl -fsSL -o \"{}\" \"{}\"", archive.string(), url);
+#else
     auto dl_cmd = std::format("curl -fsSL -o '{}' '{}'", archive.string(), url);
+#endif
     if (std::system(dl_cmd.c_str()) != 0) {
         std::println(std::cerr, "error: download failed");
         std::filesystem::remove_all(tmp);
         return 1;
     }
 
-    // 압축 해제
-    if (std::system(std::format("tar xzf '{}' -C '{}'", archive.string(), tmp.string()).c_str()) != 0) {
+#ifdef _WIN32
+    auto extract_cmd = std::format("tar xf \"{}\" -C \"{}\"", archive.string(), tmp.string());
+#else
+    auto extract_cmd = std::format("tar xzf '{}' -C '{}'", archive.string(), tmp.string());
+#endif
+    if (std::system(extract_cmd.c_str()) != 0) {
         std::println(std::cerr, "error: extraction failed");
         std::filesystem::remove_all(tmp);
         return 1;
     }
 
-    // 자기 자신 교체
-    auto new_binary = tmp / "intron";
     auto target = std::filesystem::canonical(self_path);
+#ifdef _WIN32
+    // Windows: cannot overwrite a running exe directly
+    auto new_binary = tmp / "intron.exe";
+    auto old_binary = target;
+    old_binary += ".old";
+    std::filesystem::rename(target, old_binary);
     std::filesystem::rename(new_binary, target);
+    std::filesystem::remove(old_binary);
+#else
+    auto new_binary = tmp / "intron";
+    std::filesystem::rename(new_binary, target);
+#endif
     std::filesystem::remove_all(tmp);
 
     std::println("Updated intron to {}", *latest);
@@ -230,7 +251,7 @@ int cmd_env() {
         return 1;
     }
 
-    // PATH에 추가할 bin 디렉토리 수집
+    // Collect bin directories for PATH
     std::vector<std::string> paths;
     for (auto const& [tool, version] : defaults) {
         auto base = installer::toolchain_path(tool, version);
@@ -246,19 +267,37 @@ int cmd_env() {
 
     // PATH
     std::string path_val;
+#ifdef _WIN32
+    constexpr auto path_sep = ';';
+#else
+    constexpr auto path_sep = ':';
+#endif
     for (auto const& p : paths) {
-        if (!path_val.empty()) path_val += ':';
+        if (!path_val.empty()) path_val += path_sep;
         path_val += p;
     }
-    std::println("export PATH=\"{}:$PATH\";", path_val);
 
-    // CC/CXX (LLVM이 default에 있을 때)
+#ifdef _WIN32
+    // PowerShell syntax
+    std::println("$env:PATH = \"{}{}{}\";", path_val, path_sep, "$env:PATH");
+#else
+    std::println("export PATH=\"{}{}$PATH\";", path_val, path_sep);
+#endif
+
+    // CC/CXX (when LLVM is set as default)
     if (defaults.contains("llvm")) {
         auto llvm_bin = installer::toolchain_path("llvm", defaults.at("llvm")) / "bin";
+#ifdef _WIN32
+        if (std::filesystem::exists(llvm_bin / "clang-cl.exe")) {
+            std::println("$env:CC = \"{}\";", (llvm_bin / "clang-cl.exe").string());
+            std::println("$env:CXX = \"{}\";", (llvm_bin / "clang-cl.exe").string());
+        }
+#else
         if (std::filesystem::exists(llvm_bin / "clang")) {
             std::println("export CC=\"{}\";", (llvm_bin / "clang").string());
             std::println("export CXX=\"{}\";", (llvm_bin / "clang++").string());
         }
+#endif
     }
 
     return 0;

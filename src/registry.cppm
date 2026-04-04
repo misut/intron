@@ -8,11 +8,11 @@ struct ToolInfo {
     std::string version;
     std::string url;
     std::string archive_type;  // "tar.xz", "tar.gz", "zip"
-    std::string strip_prefix;  // 아카이브 내부 최상위 디렉토리
-    std::string checksum_url;  // SHA-256 체크섬 파일 URL (비어있으면 검증 생략)
+    std::string strip_prefix;  // top-level directory inside archive
+    std::string checksum_url;  // SHA-256 checksum file URL (empty to skip verification)
 };
 
-enum class OS { macOS, Linux };
+enum class OS { macOS, Linux, Windows };
 enum class Arch { ARM64, X64 };
 
 struct Platform {
@@ -33,6 +33,12 @@ Platform detect_platform() {
     #else
     return {OS::Linux, Arch::X64};
     #endif
+#elif defined(_WIN32)
+    #if defined(_M_ARM64)
+    return {OS::Windows, Arch::ARM64};
+    #else
+    return {OS::Windows, Arch::X64};
+    #endif
 #else
     #error "Unsupported platform"
 #endif
@@ -42,7 +48,22 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
     auto plat = detect_platform();
 
     if (tool == "llvm") {
-        // LLVM GitHub releases: LLVM-{ver}-{macOS-ARM64|macOS-X64|...}.tar.xz
+        if (plat.os == OS::Windows) {
+            // clang+llvm-{ver}-x86_64-pc-windows-msvc.tar.xz
+            auto arch_str = plat.arch == Arch::ARM64
+                ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
+            auto filename = std::format("clang+llvm-{}-{}.tar.xz", version, arch_str);
+            return {
+                .name = std::string{tool},
+                .version = std::string{version},
+                .url = std::format(
+                    "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}",
+                    version, filename),
+                .archive_type = "tar.xz",
+                .strip_prefix = std::format("clang+llvm-{}-{}", version, arch_str),
+            };
+        }
+        // macOS / Linux: LLVM-{ver}-{macOS-ARM64|Linux-X64|...}.tar.xz
         auto plat_str = std::format("{}-{}",
             plat.os == OS::macOS ? "macOS" : "Linux",
             plat.arch == Arch::ARM64 ? "ARM64" : "X64");
@@ -59,12 +80,14 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
     }
 
     if (tool == "cmake") {
-        // CMake GitHub releases
         std::string filename;
         std::string prefix;
         if (plat.os == OS::macOS) {
             filename = std::format("cmake-{}-macos-universal.tar.gz", version);
             prefix = std::format("cmake-{}-macos-universal/CMake.app/Contents", version);
+        } else if (plat.os == OS::Windows) {
+            filename = std::format("cmake-{}-windows-x86_64.zip", version);
+            prefix = std::format("cmake-{}-windows-x86_64", version);
         } else if (plat.arch == Arch::ARM64) {
             filename = std::format("cmake-{}-linux-aarch64.tar.gz", version);
             prefix = std::format("cmake-{}-linux-aarch64", version);
@@ -72,13 +95,14 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
             filename = std::format("cmake-{}-linux-x86_64.tar.gz", version);
             prefix = std::format("cmake-{}-linux-x86_64", version);
         }
+        auto archive = (plat.os == OS::Windows) ? "zip" : "tar.gz";
         return {
             .name = std::string{tool},
             .version = std::string{version},
             .url = std::format(
                 "https://github.com/Kitware/CMake/releases/download/v{}/{}",
                 version, filename),
-            .archive_type = "tar.gz",
+            .archive_type = std::string{archive},
             .strip_prefix = prefix,
             .checksum_url = std::format(
                 "https://github.com/Kitware/CMake/releases/download/v{}/cmake-{}-SHA-256.txt",
@@ -87,8 +111,14 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
     }
 
     if (tool == "ninja") {
-        // Ninja GitHub releases: ninja-mac.zip / ninja-linux.zip
-        auto filename = plat.os == OS::macOS ? "ninja-mac.zip" : "ninja-linux.zip";
+        std::string filename;
+        if (plat.os == OS::macOS) {
+            filename = "ninja-mac.zip";
+        } else if (plat.os == OS::Windows) {
+            filename = "ninja-win.zip";
+        } else {
+            filename = "ninja-linux.zip";
+        }
         return {
             .name = std::string{tool},
             .version = std::string{version},
@@ -103,7 +133,7 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
-// GitHub API에서 최신 릴리즈 태그를 가져오기 위한 URL
+// GitHub API URL for latest release tag
 std::string latest_release_api(std::string_view tool) {
     if (tool == "llvm") {
         return "https://api.github.com/repos/llvm/llvm-project/releases/latest";
@@ -122,11 +152,14 @@ std::string latest_release_api(std::string_view tool) {
 
 constexpr std::array<std::string_view, 3> supported_tools = {"cmake", "llvm", "ninja"};
 
-// 릴리즈 바이너리 플랫폼 triple
+// Platform triple for release binaries
 std::string platform_triple() {
     auto plat = detect_platform();
     if (plat.os == OS::macOS) {
         return plat.arch == Arch::ARM64 ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+    }
+    if (plat.os == OS::Windows) {
+        return "x86_64-pc-windows-msvc";
     }
     return plat.arch == Arch::ARM64 ? "aarch64-linux-gnu" : "x86_64-linux-gnu";
 }
