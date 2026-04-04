@@ -9,20 +9,14 @@ A toolchain manager for C++. Inspired by rustup.
 | macOS ARM64 (Apple Silicon) | Supported |
 | Linux x86_64 | Supported |
 | Linux ARM64 | Supported |
-| Windows x86_64 | Supported |
+| Windows x86_64 | Experimental |
 
 ## Installation
 
-### Script (macOS/Linux)
+### Script
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
-```
-
-### Script (Windows PowerShell)
-
-```powershell
-irm https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
 ```
 
 ### mise
@@ -35,14 +29,18 @@ mise use intron@latest
 
 ### Build from source
 
-Requires [Homebrew LLVM](https://formulae.brew.sh/formula/llvm) (macOS) or LLVM 20+ (Linux) and [exon](https://github.com/misut/exon).
+Requires LLVM with libc++ module support and [exon](https://github.com/misut/exon).
 
 ```sh
 # macOS
 brew install llvm
-git clone git@github.com:misut/intron.git
-cd intron
+git clone git@github.com:misut/intron.git && cd intron
 export PATH="$(brew --prefix llvm)/bin:$PATH"
+exon build --release
+
+# Linux (Ubuntu 24.04)
+# Install LLVM 20 from apt.llvm.org, then:
+export PATH="/usr/lib/llvm-20/bin:$PATH"
 exon build --release
 ```
 
@@ -55,6 +53,8 @@ intron install llvm 22.1.2
 intron install cmake 4.3.1
 intron install ninja 1.12.1
 intron default llvm 22.1.2
+intron default cmake 4.3.1
+intron default ninja 1.12.1
 eval "$(intron env)"
 clang++ --version
 ```
@@ -80,6 +80,14 @@ clang++ --version
 | LLVM | [llvm/llvm-project](https://github.com/llvm/llvm-project/releases) | clang, clang++, lld, lldb, ... |
 | CMake | [Kitware/CMake](https://github.com/Kitware/CMake/releases) | cmake, ctest, cpack |
 | Ninja | [ninja-build/ninja](https://github.com/ninja-build/ninja/releases) | ninja |
+
+## Features
+
+- **Download caching** — archives are cached in `~/.intron/downloads/` and reused on reinstall
+- **Checksum verification** — SHA-256 verification for tools that provide checksums (CMake)
+- **Atomic installs** — extracts to staging directory, then atomically renames to final path
+- **Project config** — pin toolchain versions per project with `.intron.toml`
+- **Auto clang config** — generates clang configuration files on macOS for SDK and libc++ setup
 
 ## Project Configuration
 

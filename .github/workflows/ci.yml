@@ -21,12 +21,7 @@ jobs:
           - os: ubuntu-24.04-arm
             platform: aarch64-linux-gnu
             build: exon
-          - os: windows-latest
-            platform: x86_64-pc-windows-msvc
-            build: cmake
-            experimental: true
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,48 +54,6 @@ jobs:
           fi
           exon build
           exon test
-
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install ninja cmake --yes --no-progress
-          $LLVM_VER = "20.1.5"
-          $LLVM_URL = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VER/clang+llvm-$LLVM_VER-x86_64-pc-windows-msvc.tar.xz"
-          curl -fSL -o "$env:TEMP\llvm.tar.xz" $LLVM_URL
-          mkdir "$env:TEMP\llvm-extract" -Force | Out-Null
-          tar xf "$env:TEMP\llvm.tar.xz" -C "$env:TEMP\llvm-extract"
-          $LLVM_DIR = (Get-ChildItem "$env:TEMP\llvm-extract" -Directory | Select-Object -First 1).FullName
-          Move-Item $LLVM_DIR "C:\LLVM"
-
-      - name: Build with cmake (Windows)
-        if: matrix.build == 'cmake' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          git clone https://github.com/misut/tomlcpp.git $env:TEMP\tomlcpp
-          $LLVM_PREFIX = "C:\LLVM"
-          $LLVM_VER = "20.1.5"
-          $STD_DIR = "$LLVM_PREFIX\share\libc++\v1"
-          New-Item -ItemType Directory -Force -Path $STD_DIR | Out-Null
-          $BASE_URL = "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$LLVM_VER/libcxx/modules"
-          curl -fsSL -o "$STD_DIR\std.cppm" "$BASE_URL/std.cppm"
-          curl -fsSL -o "$STD_DIR\std.compat.cppm" "$BASE_URL/std.compat.cppm"
-          $MODULES_JSON = "$LLVM_PREFIX\lib\libc++.modules.json"
-          $std_path = "$STD_DIR/std.cppm" -replace '\\','/'
-          $compat_path = "$STD_DIR/std.compat.cppm" -replace '\\','/'
-          @"
-          {"version":1,"revision":0,"modules":[{"source-path":"$std_path","is-std-c++-module":true,"local-arguments":{"public":{"compile-flags":["-stdlib=libc++"]}}},{"source-path":"$compat_path","is-std-c++-module":true,"local-arguments":{"public":{"compile-flags":["-stdlib=libc++"]}}}]}
-          "@ | Out-File -FilePath $MODULES_JSON -Encoding utf8NoBOM
-          cmake -B build -S .github/cmake -G Ninja `
-            -DTOMLCPP_DIR="$env:TEMP\tomlcpp" `
-            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX\bin\clang++.exe" `
-            -DCMAKE_LINKER="$LLVM_PREFIX\bin\lld-link.exe" `
-            -DCMAKE_CXX_STDLIB_MODULES_JSON="$MODULES_JSON" `
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++" `
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -fuse-ld=lld"
-          cmake --build build
-          New-Item -ItemType Directory -Force -Path .exon\debug | Out-Null
-          Copy-Item build\intron.exe .exon\debug\intron.exe
 
       - name: Verify
         run: .exon/debug/intron help
