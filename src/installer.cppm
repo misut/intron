@@ -43,10 +43,13 @@ std::string capture(std::string const& cmd) {
         full_cmd = std::format("{} > '{}' 2>/dev/null", cmd, tmp.string());
     }
     if (std::system(full_cmd.c_str()) != 0) return {};
-    auto in = std::ifstream{tmp};
-    auto result = std::string{
-        std::istreambuf_iterator<char>{in},
-        std::istreambuf_iterator<char>{}};
+    std::string result;
+    {
+        auto in = std::ifstream{tmp};
+        result.assign(
+            std::istreambuf_iterator<char>{in},
+            std::istreambuf_iterator<char>{});
+    } // close stream before remove (Windows blocks removing open files)
     std::filesystem::remove(tmp);
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
         result.pop_back();
@@ -60,6 +63,22 @@ bool check_command(std::string_view name) {
     } else {
         return run(std::format("command -v '{}' >/dev/null 2>&1", name)) == 0;
     }
+}
+
+std::string tar_command() {
+    // On Windows, use the system bsdtar directly (C:\Windows\System32\tar.exe)
+    // to avoid accidentally invoking MSYS/GNU tar from PATH, which treats
+    // Windows absolute paths like "C:\..." as remote hosts.
+    if constexpr (is_windows) {
+        auto const* sysroot = std::getenv("SystemRoot");
+        if (sysroot) {
+            auto p = std::filesystem::path{sysroot} / "System32" / "tar.exe";
+            if (std::filesystem::exists(p)) {
+                return std::format("\"{}\"", p.string());
+            }
+        }
+    }
+    return "tar";
 }
 
 std::string sha256_command(std::filesystem::path const& file) {
@@ -172,27 +191,35 @@ bool install(registry::ToolInfo const& info) {
             auto raw = detail::capture(detail::sha256_command(archive_path));
             auto actual_hash = detail::parse_sha256(raw);
 
-            auto in = std::ifstream{checksum_file};
-            std::string line;
             bool verified = false;
-            while (std::getline(in, line)) {
-                if (line.contains(archive_name)) {
-                    auto expected_hash = line.substr(0, line.find(' '));
-                    if (actual_hash == expected_hash) {
-                        std::println("Checksum OK");
-                        verified = true;
-                    } else {
-                        std::println(std::cerr,
-                            "error: checksum mismatch\n  expected: {}\n  actual:   {}",
-                            expected_hash, actual_hash);
-                        std::filesystem::remove(checksum_file);
-                        cleanup();
-                        return false;
+            bool mismatch = false;
+            std::string expected_hash;
+            {
+                auto in = std::ifstream{checksum_file};
+                std::string line;
+                while (std::getline(in, line)) {
+                    if (line.contains(archive_name)) {
+                        expected_hash = line.substr(0, line.find(' '));
+                        if (actual_hash == expected_hash) {
+                            verified = true;
+                        } else {
+                            mismatch = true;
+                        }
+                        break;
                     }
-                    break;
                 }
-            }
+            } // close stream before remove (Windows blocks removing open files)
             std::filesystem::remove(checksum_file);
+            if (mismatch) {
+                std::println(std::cerr,
+                    "error: checksum mismatch\n  expected: {}\n  actual:   {}",
+                    expected_hash, actual_hash);
+                cleanup();
+                return false;
+            }
+            if (verified) {
+                std::println("Checksum OK");
+            }
             if (!verified) {
                 std::println("warning: checksum entry not found, skipping verification");
             }
@@ -216,24 +243,47 @@ bool install(registry::ToolInfo const& info) {
             }
         }
         if constexpr (detail::is_windows) {
+            // Extra outer quotes: cmd /c strips first/last quote when the command
+            // starts with a quote, so wrap the whole thing to keep inner ones.
             extract_status = detail::run(
-                std::format("tar xf \"{}\" --strip-components={} -C \"{}\"",
-                    archive_path.string(), depth, staging.string()));
+                std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
+                    detail::tar_command(), archive_path.string(), depth, staging.string()));
         } else {
             extract_status = detail::run(
                 std::format("tar xf '{}' --strip-components={} -C '{}'",
                     archive_path.string(), depth, staging.string()));
         }
     } else if (info.archive_type == "zip") {
+        int depth = 0;
+        if (!info.strip_prefix.empty()) {
+            depth = 1;
+            for (auto c : info.strip_prefix) {
+                if (c == '/') ++depth;
+            }
+        }
         if constexpr (detail::is_windows) {
-            // Windows: tar can handle zip files too
+            // Windows: bsdtar can handle zip files too
             extract_status = detail::run(
-                std::format("tar xf \"{}\" -C \"{}\"",
-                    archive_path.string(), staging.string()));
+                std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
+                    detail::tar_command(), archive_path.string(), depth, staging.string()));
         } else {
-            extract_status = detail::run(
-                std::format("unzip -qo '{}' -d '{}'",
-                    archive_path.string(), staging.string()));
+            if (depth > 0) {
+                // unzip has no strip-components; extract then flatten manually
+                extract_status = detail::run(
+                    std::format("unzip -qo '{}' -d '{}'",
+                        archive_path.string(), staging.string()));
+                if (extract_status == 0) {
+                    auto inner = staging / info.strip_prefix;
+                    auto tmp = staging.parent_path() / (staging.filename().string() + ".tmp");
+                    std::filesystem::rename(inner, tmp);
+                    std::filesystem::remove_all(staging);
+                    std::filesystem::rename(tmp, staging);
+                }
+            } else {
+                extract_status = detail::run(
+                    std::format("unzip -qo '{}' -d '{}'",
+                        archive_path.string(), staging.string()));
+            }
         }
     } else {
         std::println(std::cerr, "error: unknown archive type: {}", info.archive_type);
