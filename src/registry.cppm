@@ -110,6 +110,27 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
         };
     }
 
+    if (tool == "wasi-sdk") {
+        auto arch_str = plat.arch == Arch::ARM64 ? "arm64" : "x86_64";
+        std::string_view os_str;
+        switch (plat.os) {
+            case OS::macOS:   os_str = "macos"; break;
+            case OS::Linux:   os_str = "linux"; break;
+            case OS::Windows: os_str = "windows"; break;
+        }
+        auto dirname = std::format("wasi-sdk-{}.0-{}-{}", version, arch_str, os_str);
+        auto filename = std::format("{}.tar.gz", dirname);
+        return {
+            .name = std::string{tool},
+            .version = std::string{version},
+            .url = std::format(
+                "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-{}/{}",
+                version, filename),
+            .archive_type = "tar.gz",
+            .strip_prefix = dirname,
+        };
+    }
+
     if (tool == "ninja") {
         std::string filename;
         if (plat.os == OS::macOS) {
@@ -148,13 +169,16 @@ std::string latest_release_api(std::string_view tool) {
     if (tool == "ninja") {
         return "https://api.github.com/repos/ninja-build/ninja/releases/latest";
     }
+    if (tool == "wasi-sdk") {
+        return "https://api.github.com/repos/WebAssembly/wasi-sdk/releases/latest";
+    }
     if (tool == "intron") {
         return "https://api.github.com/repos/misut/intron/releases/latest";
     }
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
-constexpr std::array<std::string_view, 3> supported_tools = {"cmake", "llvm", "ninja"};
+constexpr std::array<std::string_view, 4> supported_tools = {"cmake", "llvm", "ninja", "wasi-sdk"};
 
 // Platform triple for release binaries
 std::string platform_triple() {

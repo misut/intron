@@ -54,6 +54,18 @@ void test_resolve_ninja() {
 }
 
 
+void test_resolve_wasi_sdk() {
+    auto info = registry::resolve("wasi-sdk", "32");
+    check(info.name == "wasi-sdk", "wasi-sdk name");
+    check(info.version == "32", "wasi-sdk version");
+    check(info.archive_type == "tar.gz", "wasi-sdk archive_type");
+    check(info.url.contains("/wasi-sdk-32/"), "wasi-sdk url contains tag");
+    check(info.url.contains("WebAssembly/wasi-sdk"), "wasi-sdk url repo");
+    check(info.url.ends_with(".tar.gz"), "wasi-sdk url ends with .tar.gz");
+    check(info.strip_prefix.starts_with("wasi-sdk-32.0-"), "wasi-sdk strip_prefix format");
+    check(info.checksum_url.empty(), "wasi-sdk has no checksum url");
+}
+
 void test_latest_release_api() {
     auto llvm = registry::latest_release_api("llvm");
     check(llvm.contains("llvm/llvm-project"), "llvm api url");
@@ -63,6 +75,9 @@ void test_latest_release_api() {
 
     auto ninja = registry::latest_release_api("ninja");
     check(ninja.contains("ninja-build/ninja"), "ninja api url");
+
+    auto wasi_sdk = registry::latest_release_api("wasi-sdk");
+    check(wasi_sdk.contains("WebAssembly/wasi-sdk"), "wasi-sdk api url");
 
     auto intron = registry::latest_release_api("intron");
     check(intron.contains("misut/intron"), "intron api url");
@@ -86,6 +101,7 @@ int main() {
     test_resolve_llvm();
     test_resolve_cmake();
     test_resolve_ninja();
+    test_resolve_wasi_sdk();
     test_latest_release_api();
     test_detect_platform();
 
