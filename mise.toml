@@ -3,7 +3,7 @@ exon = "https://github.com/misut/mise-exon.git"
 intron = "https://github.com/misut/mise-intron.git"
 
 [tools]
-exon = "0.10.1"
+exon = "0.11.0"
 intron = "0.10.0"
 cmake = "latest"
 ninja = "latest"
