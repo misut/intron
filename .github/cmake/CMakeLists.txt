@@ -7,6 +7,11 @@ set(CMAKE_CXX_MODULE_STD ON)
 
 project(intron LANGUAGES CXX)
 
+if(MSVC)
+    add_compile_options(/W4 /wd4996 /utf-8)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
 set(INTRON_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(TOMLCPP_DIR "" CACHE PATH "Path to tomlcpp source")
 
