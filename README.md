@@ -9,7 +9,6 @@ A toolchain manager for C++. Inspired by rustup.
 | macOS ARM64 (Apple Silicon) | Supported |
 | Linux x86_64 | Supported |
 | Linux ARM64 | Supported |
-| Windows x86_64 | Experimental |
 
 ## Installation
 
@@ -29,10 +28,12 @@ mise use intron@latest
 
 ### Build from source
 
-Requires [intron](https://github.com/misut/intron) (for LLVM toolchain) and [exon](https://github.com/misut/exon).
+Requires [exon](https://github.com/misut/exon) and a C++23 toolchain with
+`import std;` support (clang with libc++ modules).
 
 ```sh
-# macOS
+# macOS — self-host with intron:
+curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
 git clone git@github.com:misut/intron.git && cd intron
 intron install llvm 22.1.2
 intron install cmake 4.3.1
@@ -40,8 +41,11 @@ intron install ninja 1.13.2
 eval "$(intron env)"
 exon build --release
 
-# Linux (Ubuntu 24.04)
-# Install LLVM 20 from apt.llvm.org, then:
+# Linux (Ubuntu 24.04) — use apt LLVM 20 (modules are not available in
+# LLVM's pre-built Linux tarballs yet):
+wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 20
+sudo apt-get install -y libc++-20-dev libc++abi-20-dev ninja-build
+pip install cmake --break-system-packages
 export PATH="/usr/lib/llvm-20/bin:$PATH"
 exon build --release
 ```
@@ -53,10 +57,10 @@ The binary will be at `.exon/release/intron`.
 ```sh
 intron install llvm 22.1.2
 intron install cmake 4.3.1
-intron install ninja 1.12.1
+intron install ninja 1.13.2
 intron default llvm 22.1.2
 intron default cmake 4.3.1
-intron default ninja 1.12.1
+intron default ninja 1.13.2
 eval "$(intron env)"
 clang++ --version
 ```
@@ -116,7 +120,7 @@ Create `.intron.toml` in your project root to pin toolchain versions:
 [toolchain]
 llvm = "22.1.2"
 cmake = "4.3.1"
-ninja = "1.12.1"
+ninja = "1.13.2"
 wasi-sdk = "32"
 ```
 
@@ -131,7 +135,7 @@ Project config overrides global defaults for `which`, `env`, `list`, and `update
 └── toolchains/
     ├── llvm/22.1.2/bin/clang++
     ├── cmake/4.3.1/bin/cmake
-    ├── ninja/1.12.1/ninja
+    ├── ninja/1.13.2/ninja
     └── wasi-sdk/32/bin/clang
 ```
 
