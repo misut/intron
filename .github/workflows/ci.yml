@@ -66,3 +66,33 @@ jobs:
 
       - name: Verify
         run: .exon/debug/intron help
+
+  bootstrap-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout tomlcpp
+        uses: actions/checkout@v4
+        with:
+          repository: misut/tomlcpp
+          ref: v0.1.0
+          path: tomlcpp
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Ninja
+        run: choco install ninja
+
+      - name: Configure
+        run: >
+          cmake -G Ninja -S .github/cmake -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DTOMLCPP_DIR=${{ github.workspace }}/tomlcpp
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Verify
+        run: .\build\intron.exe help

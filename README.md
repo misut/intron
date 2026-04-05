@@ -9,7 +9,7 @@ A toolchain manager for C++. Inspired by rustup.
 | macOS ARM64 (Apple Silicon) | Supported |
 | Linux x86_64 | Supported |
 | Linux ARM64 | Supported |
-| Windows x86_64 | Experimental |
+| Windows x86_64 | Experimental (bootstrap build) |
 
 ## Installation
 
@@ -47,6 +47,23 @@ exon build --release
 ```
 
 The binary will be at `.exon/release/intron`.
+
+#### Windows (MSVC bootstrap)
+
+From a **Visual Studio Developer Command Prompt** (or PowerShell for VS 2022):
+
+```powershell
+git clone https://github.com/misut/intron
+git clone https://github.com/misut/tomlcpp --branch v0.1.0
+cd intron
+cmake -G Ninja -S .github/cmake -B build `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DTOMLCPP_DIR=..\tomlcpp
+cmake --build build
+.\build\intron.exe help
+```
+
+Requirements: Visual Studio 2022 17.5+, CMake 3.30+, Ninja.
 
 ## Quick Start
 
