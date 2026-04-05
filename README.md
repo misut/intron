@@ -72,6 +72,7 @@ clang++ --version
 | `intron default <tool> <version>` | Set default version |
 | `intron env` | Print environment variables (`eval "$(intron env)"`) |
 | `intron update` | Check for newer versions |
+| `intron upgrade [tool]` | Upgrade tools to latest |
 | `intron self-update` | Update intron itself |
 | `intron help` | Show usage information |
 
@@ -82,6 +83,22 @@ clang++ --version
 | LLVM | [llvm/llvm-project](https://github.com/llvm/llvm-project/releases) | clang, clang++, lld, lldb, ... |
 | CMake | [Kitware/CMake](https://github.com/Kitware/CMake/releases) | cmake, ctest, cpack |
 | Ninja | [ninja-build/ninja](https://github.com/ninja-build/ninja/releases) | ninja |
+| wasi-sdk | [WebAssembly/wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) | WASI cross-compiler (via `$WASI_SDK_PATH`) |
+
+### WebAssembly (WASI) compilation
+
+wasi-sdk is exposed via the `WASI_SDK_PATH` environment variable (not `PATH`) to avoid
+conflicts with the native LLVM clang.
+
+```sh
+intron install wasi-sdk 32
+intron default wasi-sdk 32
+eval "$(intron env)"
+echo $WASI_SDK_PATH
+$WASI_SDK_PATH/bin/clang --sysroot=$WASI_SDK_PATH/share/wasi-sysroot hello.c -o hello.wasm
+# Or via the bundled CMake toolchain file:
+cmake -DCMAKE_TOOLCHAIN_FILE=$WASI_SDK_PATH/share/cmake/wasi-sdk.cmake ...
+```
 
 ## Features
 
@@ -100,6 +117,7 @@ Create `.intron.toml` in your project root to pin toolchain versions:
 llvm = "22.1.2"
 cmake = "4.3.1"
 ninja = "1.12.1"
+wasi-sdk = "32"
 ```
 
 Project config overrides global defaults for `which`, `env`, `list`, and `update`.
@@ -113,7 +131,8 @@ Project config overrides global defaults for `which`, `env`, `list`, and `update
 └── toolchains/
     ├── llvm/22.1.2/bin/clang++
     ├── cmake/4.3.1/bin/cmake
-    └── ninja/1.12.1/ninja
+    ├── ninja/1.12.1/ninja
+    └── wasi-sdk/32/bin/clang
 ```
 
 ## License

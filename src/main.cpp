@@ -46,7 +46,7 @@ void print_usage() {
     std::println("  self-update                Update intron itself");
     std::println("  help                       Show this message");
     std::println("");
-    std::println("Tools: llvm, cmake, ninja");
+    std::println("Tools: llvm, cmake, ninja, wasi-sdk");
 }
 
 int cmd_install(int argc, char* argv[]) {
@@ -317,9 +317,11 @@ int cmd_env() {
         return 1;
     }
 
-    // Collect bin directories for PATH
+    // Collect bin directories for PATH (wasi-sdk is excluded to avoid
+    // clang binary conflicts with llvm; it is exposed via WASI_SDK_PATH instead)
     std::vector<std::string> paths;
     for (auto const& [tool, version] : defaults) {
+        if (tool == "wasi-sdk") continue;
         auto base = installer::toolchain_path(tool, version);
         if (!std::filesystem::exists(base)) continue;
         if (tool == "ninja") {
@@ -329,26 +331,25 @@ int cmd_env() {
         }
     }
 
-    if (paths.empty()) return 0;
-
     // PATH
-    std::string path_val;
 #ifdef _WIN32
     constexpr auto path_sep = ';';
 #else
     constexpr auto path_sep = ':';
 #endif
-    for (auto const& p : paths) {
-        if (!path_val.empty()) path_val += path_sep;
-        path_val += p;
-    }
-
+    if (!paths.empty()) {
+        std::string path_val;
+        for (auto const& p : paths) {
+            if (!path_val.empty()) path_val += path_sep;
+            path_val += p;
+        }
 #ifdef _WIN32
-    // PowerShell syntax
-    std::println("$env:PATH = \"{}{}{}\";", path_val, path_sep, "$env:PATH");
+        // PowerShell syntax
+        std::println("$env:PATH = \"{}{}{}\";", path_val, path_sep, "$env:PATH");
 #else
-    std::println("export PATH=\"{}{}$PATH\";", path_val, path_sep);
+        std::println("export PATH=\"{}{}$PATH\";", path_val, path_sep);
 #endif
+    }
 
     // CC/CXX (when LLVM is set as default)
     if (defaults.contains("llvm")) {
@@ -364,6 +365,18 @@ int cmd_env() {
             std::println("export CXX=\"{}\";", (llvm_bin / "clang++").string());
         }
 #endif
+    }
+
+    // WASI_SDK_PATH (when wasi-sdk is set as default)
+    if (defaults.contains("wasi-sdk")) {
+        auto wasi_path = installer::toolchain_path("wasi-sdk", defaults.at("wasi-sdk"));
+        if (std::filesystem::exists(wasi_path)) {
+#ifdef _WIN32
+            std::println("$env:WASI_SDK_PATH = \"{}\";", wasi_path.string());
+#else
+            std::println("export WASI_SDK_PATH=\"{}\";", wasi_path.string());
+#endif
+        }
     }
 
     return 0;
