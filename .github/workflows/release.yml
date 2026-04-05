@@ -75,8 +75,50 @@ jobs:
           name: intron-${{ matrix.platform }}
           path: intron-*.tar.gz
 
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout tomlcpp
+        uses: actions/checkout@v4
+        with:
+          repository: misut/tomlcpp
+          ref: v0.1.0
+          path: tomlcpp
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '4.3.1'
+
+      - name: Install Ninja
+        run: choco install ninja -y
+
+      - name: Configure
+        run: >
+          cmake -G Ninja -S .github/cmake -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DTOMLCPP_DIR=${{ github.workspace }}/tomlcpp
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path build/intron.exe -DestinationPath intron-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: intron-x86_64-pc-windows-msvc
+          path: intron-*.zip
+
   release:
-    needs: build
+    needs: [build, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -87,5 +129,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: intron-*.tar.gz
+          files: |
+            intron-*.tar.gz
+            intron-*.zip
           generate_release_notes: true
