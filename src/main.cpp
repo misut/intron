@@ -280,7 +280,18 @@ int cmd_self_update(std::string_view self_path) {
     }
 
 #ifdef _WIN32
-    auto extract_cmd = std::format("tar xf \"{}\" -C \"{}\"", archive.string(), tmp.string());
+    // Use %SystemRoot%\System32\tar.exe (bsdtar) directly: GNU tar from
+    // Git Bash / MSYS treats "C:\..." as a remote host. The extra outer
+    // quotes are needed because cmd /c strips first/last quotes when the
+    // command starts with a quoted path.
+    std::string tar = "tar";
+    if (auto const* sr = std::getenv("SystemRoot")) {
+        auto sys_tar = std::filesystem::path{sr} / "System32" / "tar.exe";
+        if (std::filesystem::exists(sys_tar))
+            tar = std::format("\"{}\"", sys_tar.string());
+    }
+    auto extract_cmd = std::format("\"{} xf \"{}\" -C \"{}\"\"",
+        tar, archive.string(), tmp.string());
 #else
     auto extract_cmd = std::format("tar xzf '{}' -C '{}'", archive.string(), tmp.string());
 #endif
@@ -292,18 +303,24 @@ int cmd_self_update(std::string_view self_path) {
 
     auto target = std::filesystem::canonical(self_path);
 #ifdef _WIN32
-    // Windows: cannot overwrite a running exe directly
+    // Windows: rename the running exe out of the way, then place the new
+    // one. Windows lets us rename a running exe but not delete it while
+    // the process is alive, so we mark the stale .old for best-effort
+    // removal and move on if it sticks around.
     auto new_binary = tmp / "intron.exe";
     auto old_binary = target;
     old_binary += ".old";
+    std::error_code ec;
+    std::filesystem::remove(old_binary, ec); // clean leftover from prior update
     std::filesystem::rename(target, old_binary);
     std::filesystem::rename(new_binary, target);
-    std::filesystem::remove(old_binary);
+    std::filesystem::remove(old_binary, ec);
 #else
     auto new_binary = tmp / "intron";
     std::filesystem::rename(new_binary, target);
 #endif
-    std::filesystem::remove_all(tmp);
+    std::error_code tmp_ec;
+    std::filesystem::remove_all(tmp, tmp_ec);
 
     std::println("Updated intron to {}", *latest);
     return 0;
