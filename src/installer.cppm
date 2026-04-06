@@ -109,6 +109,13 @@ std::string parse_sha256(std::string const& output) {
     }
 }
 
+std::string shell_quote(std::filesystem::path const& p) {
+    if constexpr (is_windows)
+        return std::format("\"{}\"", p.string());
+    else
+        return std::format("'{}'", p.string());
+}
+
 } // namespace detail
 
 bool install(registry::ToolInfo const& info) {
@@ -401,6 +408,37 @@ bool install(registry::ToolInfo const& info) {
             }
 
             std::println("Generated clang config: {}", cfg_file.string());
+        }
+    }
+
+    // Verify the installed binary is executable on this platform
+    {
+        std::filesystem::path verify_bin;
+        if (info.name == "llvm")
+            verify_bin = dest / "bin" / "clang++";
+        else if (info.name == "ninja")
+            verify_bin = dest / "ninja";
+        else if (info.name == "wasi-sdk")
+            verify_bin = dest / "bin" / "clang++";
+        else
+            verify_bin = dest / "bin" / info.name;
+
+        if (std::filesystem::exists(verify_bin)) {
+            auto cmd = std::format("{} --version", detail::shell_quote(verify_bin));
+            std::string redirect;
+            if constexpr (detail::is_windows)
+                redirect = " > NUL 2>&1";
+            else
+                redirect = " > /dev/null 2>&1";
+            if (detail::run(cmd + redirect) != 0) {
+                std::println(std::cerr,
+                    "error: {} binary is not executable on this platform\n"
+                    "hint: the downloaded binary may not match your architecture",
+                    info.name);
+                std::filesystem::remove_all(dest);
+                cleanup();
+                return false;
+            }
         }
     }
 
