@@ -30,9 +30,8 @@ iwr -useb https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
 ### mise
 
 ```sh
-mise plugin add intron https://github.com/misut/mise-intron.git
-mise install intron@latest
-mise use intron@latest
+mise install "vfox:misut/mise-intron@latest"
+mise use "vfox:misut/mise-intron@latest"
 ```
 
 ### Build from source
