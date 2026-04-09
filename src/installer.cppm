@@ -116,6 +116,216 @@ std::string shell_quote(std::filesystem::path const& p) {
         return std::format("'{}'", p.string());
 }
 
+int strip_depth(std::string_view prefix) {
+    if (prefix.empty()) return 0;
+    int depth = 1;
+    for (auto c : prefix)
+        if (c == '/') ++depth;
+    return depth;
+}
+
+int extract_archive(std::filesystem::path const& archive,
+                    std::filesystem::path const& staging,
+                    registry::ToolInfo const& info) {
+    int depth = strip_depth(info.strip_prefix);
+
+    if (info.archive_type == "tar.xz" || info.archive_type == "tar.gz") {
+        if constexpr (is_windows) {
+            return run(std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
+                tar_command(), archive.string(), depth, staging.string()));
+        } else {
+            return run(std::format("tar xf '{}' --strip-components={} -C '{}'",
+                archive.string(), depth, staging.string()));
+        }
+    } else if (info.archive_type == "zip") {
+        if constexpr (is_windows) {
+            return run(std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
+                tar_command(), archive.string(), depth, staging.string()));
+        } else {
+            if (depth > 0) {
+                int rc = run(std::format("unzip -qo '{}' -d '{}'",
+                    archive.string(), staging.string()));
+                if (rc == 0) {
+                    auto inner = staging / info.strip_prefix;
+                    auto tmp = staging.parent_path() / (staging.filename().string() + ".tmp");
+                    std::filesystem::rename(inner, tmp);
+                    std::filesystem::remove_all(staging);
+                    std::filesystem::rename(tmp, staging);
+                }
+                return rc;
+            } else {
+                return run(std::format("unzip -qo '{}' -d '{}'",
+                    archive.string(), staging.string()));
+            }
+        }
+    }
+    return 1; // unknown archive type
+}
+
+bool verify_checksum(std::filesystem::path const& archive,
+                     std::string_view archive_name,
+                     std::filesystem::path const& downloads,
+                     std::string const& checksum_url) {
+    auto checksum_file = downloads / "checksums.txt";
+    std::string dl_cmd;
+    if constexpr (is_windows) {
+        dl_cmd = std::format("curl -fsSL --compressed -o \"{}\" \"{}\"",
+            checksum_file.string(), checksum_url);
+    } else {
+        dl_cmd = std::format("curl -fsSL --compressed -o '{}' '{}'",
+            checksum_file.string(), checksum_url);
+    }
+    if (run(dl_cmd) != 0) {
+        std::println("warning: could not download checksum file, skipping verification");
+        return true;
+    }
+
+    auto raw = capture(sha256_command(archive));
+    auto actual_hash = parse_sha256(raw);
+
+    bool verified = false;
+    bool mismatch = false;
+    std::string expected_hash;
+    {
+        auto in = std::ifstream{checksum_file};
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.contains(archive_name)) {
+                expected_hash = line.substr(0, line.find(' '));
+                if (actual_hash == expected_hash)
+                    verified = true;
+                else
+                    mismatch = true;
+                break;
+            }
+        }
+    }
+    std::filesystem::remove(checksum_file);
+
+    if (mismatch) {
+        std::println(std::cerr,
+            "error: checksum mismatch\n  expected: {}\n  actual:   {}",
+            expected_hash, actual_hash);
+        return false;
+    }
+    if (verified)
+        std::println("Checksum OK");
+    else
+        std::println("warning: checksum entry not found, skipping verification");
+    return true;
+}
+
+void write_clang_wrapper(std::filesystem::path const& bin_dir,
+                          std::string const& cfg_flag) {
+    for (auto name : {"clang", "clang++"}) {
+        auto orig = bin_dir / name;
+        auto backup = bin_dir / std::format("{}.orig", name);
+        if (std::filesystem::exists(orig) && !std::filesystem::exists(backup)) {
+            std::filesystem::rename(orig, backup);
+            auto out = std::ofstream{orig};
+            if (out) {
+                out << "#!/bin/sh\n";
+                out << std::format("exec \"{}\" {} \"$@\"\n",
+                    backup.string(), cfg_flag);
+            }
+            std::filesystem::permissions(orig,
+                std::filesystem::perms::owner_exec |
+                std::filesystem::perms::group_exec |
+                std::filesystem::perms::others_exec,
+                std::filesystem::perm_options::add);
+        }
+    }
+}
+
+void setup_llvm_config(std::filesystem::path const& dest, std::string_view version) {
+    auto plat = registry::detect_platform();
+    auto clang = dest / "bin" / "clang";
+    auto target = capture(std::format("'{}' -dumpmachine", clang.string()));
+
+    if (plat.os == registry::OS::macOS) {
+        auto sdk_path = capture("xcrun --show-sdk-path");
+        if (!target.empty() && !sdk_path.empty()) {
+            auto cfg_target = target;
+            auto darwin_pos = cfg_target.find("darwin");
+            if (darwin_pos != std::string::npos) {
+                auto ver_start = darwin_pos + 6;
+                auto dot = cfg_target.find('.', ver_start);
+                if (dot != std::string::npos)
+                    cfg_target = cfg_target.substr(0, dot);
+            }
+
+            auto cfg_dir = dest / "etc" / "clang";
+            std::filesystem::create_directories(cfg_dir);
+            auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
+            {
+                auto out = std::ofstream{cfg_file};
+                if (out) {
+                    out << std::format("-isysroot {}\n", sdk_path);
+                    out << "-stdlib=libc++\n";
+                    out << "-lc++\n";
+                }
+            }
+
+            write_clang_wrapper(dest / "bin",
+                std::format("--config-system-dir={}", cfg_dir.string()));
+            std::println("Generated clang config: {}", cfg_file.string());
+        }
+    } else if (plat.os == registry::OS::Linux && !target.empty()) {
+        auto lib_dir = dest / "lib" / target;
+        if (!std::filesystem::exists(lib_dir / "libc++.so") &&
+            !std::filesystem::exists(lib_dir / "libc++.a"))
+            lib_dir = dest / "lib";
+
+        auto cfg_dir = dest / "etc" / "clang";
+        std::filesystem::create_directories(cfg_dir);
+        auto cfg_file = cfg_dir / std::format("{}.cfg", target);
+        {
+            auto out = std::ofstream{cfg_file};
+            if (out) {
+                out << "-stdlib=libc++\n";
+                out << "-lc++\n";
+                out << "-lc++abi\n";
+                out << std::format("-L{}\n", lib_dir.string());
+                out << std::format("-Wl,-rpath,{}\n", lib_dir.string());
+            }
+        }
+
+        write_clang_wrapper(dest / "bin",
+            std::format("--config-system-dir={}", cfg_dir.string()));
+        std::println("Generated clang config: {}", cfg_file.string());
+    }
+}
+
+bool verify_installed_binary(std::filesystem::path const& dest, registry::ToolInfo const& info) {
+    std::filesystem::path verify_bin;
+    if (info.name == "llvm")
+        verify_bin = dest / "bin" / "clang++";
+    else if (info.name == "ninja")
+        verify_bin = dest / "ninja";
+    else if (info.name == "wasi-sdk")
+        verify_bin = dest / "bin" / "clang++";
+    else
+        verify_bin = dest / "bin" / info.name;
+
+    if (!std::filesystem::exists(verify_bin))
+        return true;
+
+    auto cmd = std::format("{} --version", shell_quote(verify_bin));
+    std::string redirect;
+    if constexpr (is_windows)
+        redirect = " > NUL 2>&1";
+    else
+        redirect = " > /dev/null 2>&1";
+    if (run(cmd + redirect) != 0) {
+        std::println(std::cerr,
+            "error: {} binary is not executable on this platform\n"
+            "hint: the downloaded binary may not match your architecture",
+            info.name);
+        return false;
+    }
+    return true;
+}
+
 } // namespace detail
 
 bool install(registry::ToolInfo const& info) {
@@ -185,53 +395,9 @@ bool install(registry::ToolInfo const& info) {
     // Checksum verification
     if (!info.checksum_url.empty()) {
         std::println("Verifying checksum...");
-        auto checksum_file = downloads / "checksums.txt";
-        std::string dl_cmd;
-        if constexpr (detail::is_windows) {
-            dl_cmd = std::format("curl -fsSL --compressed -o \"{}\" \"{}\"",
-                checksum_file.string(), info.checksum_url);
-        } else {
-            dl_cmd = std::format("curl -fsSL --compressed -o '{}' '{}'",
-                checksum_file.string(), info.checksum_url);
-        }
-        if (detail::run(dl_cmd) == 0) {
-            auto raw = detail::capture(detail::sha256_command(archive_path));
-            auto actual_hash = detail::parse_sha256(raw);
-
-            bool verified = false;
-            bool mismatch = false;
-            std::string expected_hash;
-            {
-                auto in = std::ifstream{checksum_file};
-                std::string line;
-                while (std::getline(in, line)) {
-                    if (line.contains(archive_name)) {
-                        expected_hash = line.substr(0, line.find(' '));
-                        if (actual_hash == expected_hash) {
-                            verified = true;
-                        } else {
-                            mismatch = true;
-                        }
-                        break;
-                    }
-                }
-            } // close stream before remove (Windows blocks removing open files)
-            std::filesystem::remove(checksum_file);
-            if (mismatch) {
-                std::println(std::cerr,
-                    "error: checksum mismatch\n  expected: {}\n  actual:   {}",
-                    expected_hash, actual_hash);
-                cleanup();
-                return false;
-            }
-            if (verified) {
-                std::println("Checksum OK");
-            }
-            if (!verified) {
-                std::println("warning: checksum entry not found, skipping verification");
-            }
-        } else {
-            std::println("warning: could not download checksum file, skipping verification");
+        if (!detail::verify_checksum(archive_path, archive_name, downloads, info.checksum_url)) {
+            cleanup();
+            return false;
         }
     }
 
@@ -240,66 +406,14 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::create_directories(staging);
 
     std::println("Extracting...");
-    int extract_status = 0;
-    if (info.archive_type == "tar.xz" || info.archive_type == "tar.gz") {
-        int depth = 0;
-        if (!info.strip_prefix.empty()) {
-            depth = 1;
-            for (auto c : info.strip_prefix) {
-                if (c == '/') ++depth;
-            }
-        }
-        if constexpr (detail::is_windows) {
-            // Extra outer quotes: cmd /c strips first/last quote when the command
-            // starts with a quote, so wrap the whole thing to keep inner ones.
-            extract_status = detail::run(
-                std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
-                    detail::tar_command(), archive_path.string(), depth, staging.string()));
-        } else {
-            extract_status = detail::run(
-                std::format("tar xf '{}' --strip-components={} -C '{}'",
-                    archive_path.string(), depth, staging.string()));
-        }
-    } else if (info.archive_type == "zip") {
-        int depth = 0;
-        if (!info.strip_prefix.empty()) {
-            depth = 1;
-            for (auto c : info.strip_prefix) {
-                if (c == '/') ++depth;
-            }
-        }
-        if constexpr (detail::is_windows) {
-            // Windows: bsdtar can handle zip files too
-            extract_status = detail::run(
-                std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
-                    detail::tar_command(), archive_path.string(), depth, staging.string()));
-        } else {
-            if (depth > 0) {
-                // unzip has no strip-components; extract then flatten manually
-                extract_status = detail::run(
-                    std::format("unzip -qo '{}' -d '{}'",
-                        archive_path.string(), staging.string()));
-                if (extract_status == 0) {
-                    auto inner = staging / info.strip_prefix;
-                    auto tmp = staging.parent_path() / (staging.filename().string() + ".tmp");
-                    std::filesystem::rename(inner, tmp);
-                    std::filesystem::remove_all(staging);
-                    std::filesystem::rename(tmp, staging);
-                }
-            } else {
-                extract_status = detail::run(
-                    std::format("unzip -qo '{}' -d '{}'",
-                        archive_path.string(), staging.string()));
-            }
-        }
-    } else {
+    if (info.archive_type != "tar.xz" && info.archive_type != "tar.gz" &&
+        info.archive_type != "zip") {
         std::println(std::cerr, "error: unknown archive type: {}", info.archive_type);
         std::filesystem::remove_all(staging);
         cleanup();
         return false;
     }
-
-    if (extract_status != 0) {
+    if (detail::extract_archive(archive_path, staging, info) != 0) {
         std::println(std::cerr, "error: extraction failed");
         std::filesystem::remove_all(staging);
         cleanup();
@@ -311,135 +425,14 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::rename(staging, dest);
 
     // Generate clang config + wrapper scripts after LLVM install
-    if (info.name == "llvm") {
-        auto plat = registry::detect_platform();
-        auto clang = dest / "bin" / "clang";
-        auto target = detail::capture(std::format("'{}' -dumpmachine", clang.string()));
-
-        if (plat.os == registry::OS::macOS) {
-            auto sdk_path = detail::capture("xcrun --show-sdk-path");
-            if (!target.empty() && !sdk_path.empty()) {
-                auto cfg_target = target;
-                auto darwin_pos = cfg_target.find("darwin");
-                if (darwin_pos != std::string::npos) {
-                    auto ver_start = darwin_pos + 6;
-                    auto dot = cfg_target.find('.', ver_start);
-                    if (dot != std::string::npos) {
-                        cfg_target = cfg_target.substr(0, dot);
-                    }
-                }
-
-                auto cfg_dir = dest / "etc" / "clang";
-                std::filesystem::create_directories(cfg_dir);
-                auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
-                {
-                    auto out = std::ofstream{cfg_file};
-                    if (out) {
-                        out << std::format("-isysroot {}\n", sdk_path);
-                        out << "-stdlib=libc++\n";
-                        out << "-lc++\n";
-                    }
-                }
-
-                auto bin_dir = dest / "bin";
-                auto cfg_flag = std::format("--config-system-dir={}", cfg_dir.string());
-                for (auto name : {"clang", "clang++"}) {
-                    auto orig = bin_dir / name;
-                    auto backup = bin_dir / std::format("{}.orig", name);
-                    if (std::filesystem::exists(orig) && !std::filesystem::exists(backup)) {
-                        std::filesystem::rename(orig, backup);
-                        auto out = std::ofstream{orig};
-                        if (out) {
-                            out << "#!/bin/sh\n";
-                            out << std::format("exec \"{}\" {} \"$@\"\n",
-                                backup.string(), cfg_flag);
-                        }
-                        std::filesystem::permissions(orig,
-                            std::filesystem::perms::owner_exec |
-                            std::filesystem::perms::group_exec |
-                            std::filesystem::perms::others_exec,
-                            std::filesystem::perm_options::add);
-                    }
-                }
-
-                std::println("Generated clang config: {}", cfg_file.string());
-            }
-        } else if (plat.os == registry::OS::Linux && !target.empty()) {
-            // Find libc++ directory (may be in lib/ or lib/<triple>/)
-            auto lib_dir = dest / "lib" / target;
-            if (!std::filesystem::exists(lib_dir / "libc++.so") &&
-                !std::filesystem::exists(lib_dir / "libc++.a")) {
-                lib_dir = dest / "lib";
-            }
-
-            auto cfg_dir = dest / "etc" / "clang";
-            std::filesystem::create_directories(cfg_dir);
-            auto cfg_file = cfg_dir / std::format("{}.cfg", target);
-            {
-                auto out = std::ofstream{cfg_file};
-                if (out) {
-                    out << "-stdlib=libc++\n";
-                    out << "-lc++\n";
-                    out << "-lc++abi\n";
-                    out << std::format("-L{}\n", lib_dir.string());
-                    out << std::format("-Wl,-rpath,{}\n", lib_dir.string());
-                }
-            }
-
-            auto bin_dir = dest / "bin";
-            auto cfg_flag = std::format("--config-system-dir={}", cfg_dir.string());
-            for (auto name : {"clang", "clang++"}) {
-                auto orig = bin_dir / name;
-                auto backup = bin_dir / std::format("{}.orig", name);
-                if (std::filesystem::exists(orig) && !std::filesystem::exists(backup)) {
-                    std::filesystem::rename(orig, backup);
-                    auto out = std::ofstream{orig};
-                    if (out) {
-                        out << "#!/bin/sh\n";
-                        out << std::format("exec \"{}\" {} \"$@\"\n",
-                            backup.string(), cfg_flag);
-                    }
-                    std::filesystem::permissions(orig,
-                        std::filesystem::perms::owner_exec |
-                        std::filesystem::perms::group_exec |
-                        std::filesystem::perms::others_exec,
-                        std::filesystem::perm_options::add);
-                }
-            }
-
-            std::println("Generated clang config: {}", cfg_file.string());
-        }
-    }
+    if (info.name == "llvm")
+        detail::setup_llvm_config(dest, info.version);
 
     // Verify the installed binary is executable on this platform
-    {
-        std::filesystem::path verify_bin;
-        if (info.name == "llvm")
-            verify_bin = dest / "bin" / "clang++";
-        else if (info.name == "ninja")
-            verify_bin = dest / "ninja";
-        else if (info.name == "wasi-sdk")
-            verify_bin = dest / "bin" / "clang++";
-        else
-            verify_bin = dest / "bin" / info.name;
-
-        if (std::filesystem::exists(verify_bin)) {
-            auto cmd = std::format("{} --version", detail::shell_quote(verify_bin));
-            std::string redirect;
-            if constexpr (detail::is_windows)
-                redirect = " > NUL 2>&1";
-            else
-                redirect = " > /dev/null 2>&1";
-            if (detail::run(cmd + redirect) != 0) {
-                std::println(std::cerr,
-                    "error: {} binary is not executable on this platform\n"
-                    "hint: the downloaded binary may not match your architecture",
-                    info.name);
-                std::filesystem::remove_all(dest);
-                cleanup();
-                return false;
-            }
-        }
+    if (!detail::verify_installed_binary(dest, info)) {
+        std::filesystem::remove_all(dest);
+        cleanup();
+        return false;
     }
 
     success = true;
