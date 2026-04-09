@@ -15,23 +15,22 @@ std::filesystem::path config_path() {
     return std::filesystem::path{home} / ".intron" / "config.toml";
 }
 
-std::map<std::string, std::string> load_defaults() {
-    std::map<std::string, std::string> defaults;
-    auto path = config_path();
-    if (!std::filesystem::exists(path)) {
-        return defaults;
-    }
-
+std::map<std::string, std::string> load_toml_section(
+    std::filesystem::path const& path, std::string_view section) {
+    std::map<std::string, std::string> result;
+    if (!std::filesystem::exists(path)) return result;
     auto table = toml::parse_file(path.string());
-    if (table.contains("defaults")) {
-        auto const& defs = table.at("defaults").as_table();
-        for (auto const& [key, value] : defs) {
-            if (value.is_string()) {
-                defaults[key] = value.as_string();
-            }
-        }
+    auto sec_key = std::string{section};
+    if (table.contains(sec_key)) {
+        auto const& sec = table.at(sec_key).as_table();
+        for (auto const& [key, value] : sec)
+            if (value.is_string()) result[key] = value.as_string();
     }
-    return defaults;
+    return result;
+}
+
+std::map<std::string, std::string> load_defaults() {
+    return load_toml_section(config_path(), "defaults");
 }
 
 // Search for .intron.toml from current directory upward
@@ -49,22 +48,10 @@ std::optional<std::filesystem::path> find_project_config() {
     return std::nullopt;
 }
 
-// Load [toolchain] section from project config
 std::map<std::string, std::string> load_project_toolchain() {
-    std::map<std::string, std::string> result;
     auto path = find_project_config();
-    if (!path) return result;
-
-    auto table = toml::parse_file(path->string());
-    if (table.contains("toolchain")) {
-        auto const& tc = table.at("toolchain").as_table();
-        for (auto const& [key, value] : tc) {
-            if (value.is_string()) {
-                result[key] = value.as_string();
-            }
-        }
-    }
-    return result;
+    if (!path) return {};
+    return load_toml_section(*path, "toolchain");
 }
 
 // Look up: project config > global defaults

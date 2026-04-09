@@ -131,22 +131,19 @@ int cmd_default(int argc, char* argv[]) {
     return 0;
 }
 
-int cmd_update() {
+std::map<std::string, std::string> build_tool_map() {
     auto installed = installer::list_installed();
     auto defaults = config::load_effective_defaults();
-
-    // Union of installed tools and default tools
     std::map<std::string, std::string> current;
-    for (auto const& [tool, version] : installed) {
-        if (!current.contains(tool)) {
-            current[tool] = version;
-        }
-    }
-    for (auto const& [tool, version] : defaults) {
-        if (!current.contains(tool)) {
-            current[tool] = version;
-        }
-    }
+    for (auto const& [tool, version] : installed)
+        if (!current.contains(tool)) current[tool] = version;
+    for (auto const& [tool, version] : defaults)
+        if (!current.contains(tool)) current[tool] = version;
+    return current;
+}
+
+int cmd_update() {
+    auto current = build_tool_map();
 
     if (current.empty()) {
         // Show latest versions for all tools if none installed
@@ -182,17 +179,7 @@ int cmd_update() {
 }
 
 int cmd_upgrade(int argc, char* argv[]) {
-    auto installed = installer::list_installed();
-    auto defaults = config::load_effective_defaults();
-
-    // Build list of tools to upgrade
-    std::map<std::string, std::string> current;
-    for (auto const& [tool, version] : installed) {
-        if (!current.contains(tool)) current[tool] = version;
-    }
-    for (auto const& [tool, version] : defaults) {
-        if (!current.contains(tool)) current[tool] = version;
-    }
+    auto current = build_tool_map();
 
     // Filter to specific tool if requested
     if (argc >= 3) {
