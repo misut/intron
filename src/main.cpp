@@ -35,24 +35,36 @@ void print_usage() {
     std::println("Usage: intron <command> [args...]");
     std::println("");
     std::println("Commands:");
-    std::println("  install <tool> <version>   Install a toolchain");
+    std::println("  install [tool] [version]   Install toolchain(s) (reads .intron.toml if no args)");
     std::println("  remove  <tool> <version>   Remove a toolchain");
     std::println("  list                       List installed toolchains");
     std::println("  which   <binary>           Print path to binary");
-    std::println("  default <tool> <version>   Set default version");
+    std::println("  default <tool> <version>   Set global default version");
+    std::println("  use     [tool] [version]   Set project toolchain in .intron.toml");
     std::println("  update                     Check for updates");
     std::println("  upgrade [tool]             Upgrade tools to latest");
     std::println("  env                        Print environment variables");
     std::println("  self-update                Update intron itself");
     std::println("  help                       Show this message");
     std::println("");
-    std::println("Tools: llvm, cmake, ninja, wasi-sdk");
+    std::println("Tools: llvm, cmake, ninja, wasi-sdk, wasmtime");
 }
 
 int cmd_install(int argc, char* argv[]) {
-    if (argc != 4) {
-        std::println(std::cerr, "Usage: intron install <tool> <version>");
-        return 1;
+    if (argc < 4) {
+        // No args: install all from .intron.toml
+        auto toolchain = config::load_project_toolchain();
+        if (toolchain.empty()) {
+            std::println(std::cerr, "Usage: intron install <tool> <version>");
+            std::println(std::cerr, "       intron install  (reads .intron.toml)");
+            return 1;
+        }
+        int failed = 0;
+        for (auto const& [tool, version] : toolchain) {
+            auto info = registry::resolve(tool, version);
+            if (!installer::install(info)) ++failed;
+        }
+        return failed > 0 ? 1 : 0;
     }
     auto info = registry::resolve(argv[2], argv[3]);
     return installer::install(info) ? 0 : 1;
@@ -128,6 +140,46 @@ int cmd_default(int argc, char* argv[]) {
 
     config::set_default(tool, version);
     std::println("Set {} default to {}", tool, version);
+    return 0;
+}
+
+int cmd_use(int argc, char* argv[]) {
+    auto existing = config::load_project_toolchain();
+
+    if (argc < 3) {
+        // No args: write all effective defaults
+        auto defaults = config::load_effective_defaults();
+        if (defaults.empty()) {
+            std::println(std::cerr, "error: no default versions set");
+            std::println(std::cerr, "hint: run 'intron default <tool> <version>' first");
+            return 1;
+        }
+        for (auto const& [tool, version] : defaults) {
+            existing[tool] = version;
+            std::println("set {} {}", tool, version);
+        }
+    } else {
+        auto tool = std::string{argv[2]};
+        std::string version;
+        if (argc >= 4) {
+            version = argv[3];
+            auto dest = installer::toolchain_path(tool, version);
+            if (!std::filesystem::exists(dest))
+                std::println("warning: {} {} is not installed", tool, version);
+        } else {
+            auto def = config::get_default(tool);
+            if (!def) {
+                std::println(std::cerr, "error: no default version for {}", tool);
+                return 1;
+            }
+            version = *def;
+        }
+        existing[tool] = version;
+        std::println("set {} {}", tool, version);
+    }
+
+    config::write_project_config(existing);
+    std::println("wrote .intron.toml");
     return 0;
 }
 
@@ -402,6 +454,7 @@ int main(int argc, char* argv[]) {
         if (command == "list")    return cmd_list();
         if (command == "which")   return cmd_which(argc, argv);
         if (command == "default") return cmd_default(argc, argv);
+        if (command == "use")     return cmd_use(argc, argv);
         if (command == "update")  return cmd_update();
         if (command == "upgrade") return cmd_upgrade(argc, argv);
         if (command == "env")     return cmd_env();
