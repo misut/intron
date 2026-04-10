@@ -98,4 +98,13 @@ void set_default(std::string_view tool, std::string_view version) {
     }
 }
 
+void write_project_config(std::map<std::string, std::string> const& toolchain) {
+    auto out = std::ofstream{".intron.toml"};
+    if (!out)
+        throw std::runtime_error("cannot write .intron.toml");
+    out << "[toolchain]\n";
+    for (auto const& [k, v] : toolchain)
+        out << std::format("{} = \"{}\"\n", k, v);
+}
+
 } // namespace config
