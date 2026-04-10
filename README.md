@@ -94,11 +94,12 @@ clang++ --version
 
 | Command | Description |
 |---------|-------------|
-| `intron install <tool> <version>` | Download and install a toolchain |
+| `intron install [tool] [version]` | Install toolchain(s) (reads `.intron.toml` if no args) |
 | `intron remove <tool> <version>` | Remove an installed toolchain |
 | `intron list` | List installed toolchains |
 | `intron which <binary>` | Print absolute path to a binary |
-| `intron default <tool> <version>` | Set default version |
+| `intron default <tool> <version>` | Set global default version |
+| `intron use [tool] [version]` | Set project toolchain in `.intron.toml` |
 | `intron env` | Print environment variables (`eval "$(intron env)"`) |
 | `intron update` | Check for newer versions |
 | `intron upgrade [tool]` | Upgrade tools to latest |
@@ -113,6 +114,7 @@ clang++ --version
 | CMake | [Kitware/CMake](https://github.com/Kitware/CMake/releases) | cmake, ctest, cpack |
 | Ninja | [ninja-build/ninja](https://github.com/ninja-build/ninja/releases) | ninja |
 | wasi-sdk | [WebAssembly/wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) | WASI cross-compiler (via `$WASI_SDK_PATH`) |
+| wasmtime | [bytecodealliance/wasmtime](https://github.com/bytecodealliance/wasmtime/releases) | wasmtime |
 
 ### WebAssembly (WASI) compilation
 
@@ -139,7 +141,15 @@ cmake -DCMAKE_TOOLCHAIN_FILE=$WASI_SDK_PATH/share/cmake/wasi-sdk.cmake ...
 
 ## Project Configuration
 
-Create `.intron.toml` in your project root to pin toolchain versions:
+Use `intron use` to generate `.intron.toml` from current defaults:
+
+```sh
+intron use                    # pin all defaults
+intron use llvm 22.1.2        # pin specific tool
+intron install                # install all from .intron.toml
+```
+
+This creates `.intron.toml` in the current directory:
 
 ```toml
 [toolchain]
