@@ -328,7 +328,7 @@ int cmd_env() {
         if (tool == "wasi-sdk") continue;
         auto base = installer::toolchain_path(tool, version);
         if (!std::filesystem::exists(base)) continue;
-        if (tool == "ninja") {
+        if (tool == "ninja" || tool == "wasmtime") {
             paths.push_back(base.string());
         } else {
             paths.push_back((base / "bin").string());
