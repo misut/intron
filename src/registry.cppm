@@ -131,6 +131,30 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
         };
     }
 
+    if (tool == "wasmtime") {
+        std::string arch_str, os_str, archive;
+        if (plat.os == OS::macOS) {
+            arch_str = plat.arch == Arch::ARM64 ? "aarch64" : "x86_64";
+            os_str = "macos"; archive = "tar.xz";
+        } else if (plat.os == OS::Windows) {
+            arch_str = "x86_64"; os_str = "windows"; archive = "zip";
+        } else {
+            arch_str = plat.arch == Arch::ARM64 ? "aarch64" : "x86_64";
+            os_str = "linux"; archive = "tar.xz";
+        }
+        auto dirname = std::format("wasmtime-v{}-{}-{}", version, arch_str, os_str);
+        auto filename = std::format("{}.{}", dirname, archive);
+        return {
+            .name = std::string{tool},
+            .version = std::string{version},
+            .url = std::format(
+                "https://github.com/bytecodealliance/wasmtime/releases/download/v{}/{}",
+                version, filename),
+            .archive_type = std::string{archive},
+            .strip_prefix = dirname,
+        };
+    }
+
     if (tool == "ninja") {
         std::string filename;
         if (plat.os == OS::macOS) {
@@ -172,13 +196,16 @@ std::string latest_release_api(std::string_view tool) {
     if (tool == "wasi-sdk") {
         return "https://api.github.com/repos/WebAssembly/wasi-sdk/releases/latest";
     }
+    if (tool == "wasmtime") {
+        return "https://api.github.com/repos/bytecodealliance/wasmtime/releases/latest";
+    }
     if (tool == "intron") {
         return "https://api.github.com/repos/misut/intron/releases/latest";
     }
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
-constexpr std::array<std::string_view, 4> supported_tools = {"cmake", "llvm", "ninja", "wasi-sdk"};
+constexpr std::array<std::string_view, 5> supported_tools = {"cmake", "llvm", "ninja", "wasi-sdk", "wasmtime"};
 
 // Platform triple for release binaries
 std::string platform_triple() {
