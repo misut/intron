@@ -3,8 +3,20 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "LICENSE"
+      - ".gitignore"
+      - "mise.toml"
+      - ".claude/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "LICENSE"
+      - ".gitignore"
+      - "mise.toml"
+      - ".claude/**"
 
 jobs:
   build:
@@ -20,7 +32,7 @@ jobs:
             platform: aarch64-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install intron (macOS)
         if: runner.os == 'macOS'
@@ -49,12 +61,12 @@ jobs:
 
       - name: Install exon
         run: |
-          gh release download v0.15.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+          gh release download v0.17.0 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
           tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Build
+      - name: Build and test
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
             eval "$(intron env)"
@@ -70,13 +82,13 @@ jobs:
   bootstrap-windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Checkout tomlcpp
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: misut/tomlcpp
-          ref: v0.1.0
+          ref: v0.3.0
           path: tomlcpp
 
       - name: Setup MSVC
