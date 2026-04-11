@@ -54,19 +54,33 @@ void test_set_and_load_defaults() {
 }
 
 void test_project_config() {
-    // 임시 .intron.toml 생성하여 프로젝트 설정 테스트
-    auto project_cfg = std::filesystem::current_path() / ".intron.toml";
-    {
-        auto out = std::ofstream{project_cfg};
-        out << "[toolchain]\n";
-        out << "llvm = \"19.0.0\"\n";
+    // chdir into a tempdir so writing .intron.toml doesn't clobber
+    // the repo's tracked .intron.toml when this test runs from the
+    // project root (which `exon test` does by default).
+    auto const tmp = std::filesystem::temp_directory_path() /
+                     "intron_test_project_config";
+    std::filesystem::create_directories(tmp);
+    auto const saved_cwd = std::filesystem::current_path();
+    std::filesystem::current_path(tmp);
+
+    try {
+        {
+            auto out = std::ofstream{".intron.toml"};
+            out << "[toolchain]\n";
+            out << "llvm = \"19.0.0\"\n";
+        }
+
+        auto result = config::load_project_toolchain();
+        check(result.contains("llvm"), "project config contains llvm");
+        check(result.at("llvm") == "19.0.0", "project config llvm version");
+    } catch (...) {
+        std::filesystem::current_path(saved_cwd);
+        std::filesystem::remove_all(tmp);
+        throw;
     }
 
-    auto result = config::load_project_toolchain();
-    check(result.contains("llvm"), "project config contains llvm");
-    check(result.at("llvm") == "19.0.0", "project config llvm version");
-
-    std::filesystem::remove(project_cfg);
+    std::filesystem::current_path(saved_cwd);
+    std::filesystem::remove_all(tmp);
 }
 
 int main() {
