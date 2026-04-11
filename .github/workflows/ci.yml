@@ -97,6 +97,13 @@ jobs:
           ref: v0.3.0
           path: tomlcpp
 
+      - name: Checkout cppx
+        uses: actions/checkout@v6
+        with:
+          repository: misut/cppx
+          ref: v0.1.0
+          path: cppx
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -113,6 +120,7 @@ jobs:
           cmake -G Ninja -S .github/cmake -B build
           -DCMAKE_BUILD_TYPE=Release
           -DTOMLCPP_DIR=${{ github.workspace }}/tomlcpp
+          -DCPPX_DIR=${{ github.workspace }}/cppx
 
       - name: Build
         run: cmake --build build
