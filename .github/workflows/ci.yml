@@ -103,7 +103,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: misut/cppx
-          ref: v0.1.0
+          ref: v0.3.1
           path: cppx
 
       - name: Setup MSVC

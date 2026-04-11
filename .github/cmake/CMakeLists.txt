@@ -34,6 +34,7 @@ target_sources(cppx-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CPPX_DIR}/src FILES
     ${CPPX_DIR}/src/cppx.cppm
     ${CPPX_DIR}/src/cppx.env.cppm
+    ${CPPX_DIR}/src/cppx.env.system.cppm
     ${CPPX_DIR}/src/cppx.platform.cppm
     ${CPPX_DIR}/src/cppx.reflect.cppm
 )
