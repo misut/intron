@@ -1,12 +1,12 @@
 export module installer;
 import std;
-import cppx.env;
+import cppx.env.system;
 export import registry;
 
 export namespace installer {
 
 std::filesystem::path intron_home() {
-    auto home = cppx::env::home_dir();
+    auto home = cppx::env::system::home_dir();
     if (!home)
         throw std::runtime_error("HOME environment variable not set");
     auto path = *home / ".intron";

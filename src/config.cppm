@@ -1,12 +1,12 @@
 export module config;
 import std;
-import cppx.env;
+import cppx.env.system;
 import toml;
 
 export namespace config {
 
 std::filesystem::path config_path() {
-    auto home = cppx::env::home_dir();
+    auto home = cppx::env::system::home_dir();
     if (!home)
         throw std::runtime_error("HOME environment variable not set");
     return *home / ".intron" / "config.toml";

@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v0.1.0
+    GIT_TAG v0.3.0
     GIT_SHALLOW ON
 )
 FetchContent_Declare(tomlcpp
