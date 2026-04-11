@@ -8,5 +8,5 @@ type = "bin"
 standard = 23
 
 [dependencies]
-"github.com/misut/cppx" = "0.1.0"
+"github.com/misut/cppx" = "0.3.1"
 "github.com/misut/tomlcpp" = "0.3.0"
