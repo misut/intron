@@ -51,7 +51,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.16.1\""
+    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.16.2\""
 )
 
 add_executable(test-test_config)
