@@ -1,18 +1,15 @@
 export module config;
 import std;
+import cppx.env;
 import toml;
 
 export namespace config {
 
 std::filesystem::path config_path() {
-    auto home = std::getenv("HOME");
-#ifdef _WIN32
-    if (!home) home = std::getenv("USERPROFILE");
-#endif
-    if (!home) {
+    auto home = cppx::env::home_dir();
+    if (!home)
         throw std::runtime_error("HOME environment variable not set");
-    }
-    return std::filesystem::path{home} / ".intron" / "config.toml";
+    return *home / ".intron" / "config.toml";
 }
 
 std::map<std::string, std::string> load_toml_section(

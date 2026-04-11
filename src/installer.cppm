@@ -1,18 +1,15 @@
 export module installer;
 import std;
+import cppx.env;
 export import registry;
 
 export namespace installer {
 
 std::filesystem::path intron_home() {
-    auto home = std::getenv("HOME");
-#ifdef _WIN32
-    if (!home) home = std::getenv("USERPROFILE");
-#endif
-    if (!home) {
+    auto home = cppx::env::home_dir();
+    if (!home)
         throw std::runtime_error("HOME environment variable not set");
-    }
-    auto path = std::filesystem::path{home} / ".intron";
+    auto path = *home / ".intron";
     std::filesystem::create_directories(path);
     return path;
 }
