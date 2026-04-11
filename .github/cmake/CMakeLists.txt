@@ -14,6 +14,7 @@ endif()
 
 set(INTRON_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(TOMLCPP_DIR "" CACHE PATH "Path to tomlcpp source")
+set(CPPX_DIR "" CACHE PATH "Path to cppx source")
 
 # Extract version from exon.toml so intron --version reflects the release
 file(READ ${INTRON_SOURCE_DIR}/exon.toml _intron_toml_content)
@@ -24,6 +25,19 @@ if(NOT INTRON_VERSION)
 endif()
 
 add_subdirectory(${TOMLCPP_DIR} tomlcpp)
+
+# cppx is shipped as separate .cppm submodules; declare them inline
+# instead of recursing into its CMakeLists (which is exon-generated and
+# expects the full exon build environment).
+add_library(cppx-modules)
+target_sources(cppx-modules
+    PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CPPX_DIR}/src FILES
+    ${CPPX_DIR}/src/cppx.cppm
+    ${CPPX_DIR}/src/cppx.env.cppm
+    ${CPPX_DIR}/src/cppx.platform.cppm
+    ${CPPX_DIR}/src/cppx.reflect.cppm
+)
+add_library(cppx ALIAS cppx-modules)
 
 add_executable(intron)
 target_sources(intron PRIVATE
@@ -36,4 +50,4 @@ target_sources(intron
     ${INTRON_SOURCE_DIR}/src/registry.cppm
 )
 target_compile_definitions(intron PRIVATE EXON_PKG_VERSION="${INTRON_VERSION}")
-target_link_libraries(intron PRIVATE tomlcpp)
+target_link_libraries(intron PRIVATE tomlcpp cppx)
