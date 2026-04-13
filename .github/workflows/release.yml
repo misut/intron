@@ -21,7 +21,7 @@ jobs:
             platform: aarch64-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install intron (macOS)
         if: runner.os == 'macOS'
@@ -72,7 +72,7 @@ jobs:
             -C .exon/release intron
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: intron-${{ matrix.platform }}
           path: intron-*.tar.gz
@@ -80,20 +80,20 @@ jobs:
   build-windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Checkout tomlcpp
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: misut/tomlcpp
           ref: v0.3.0
           path: tomlcpp
 
       - name: Checkout cppx
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: misut/cppx
-          ref: v0.1.0
+          ref: v0.3.1
           path: cppx
 
       - name: Setup MSVC
@@ -122,7 +122,7 @@ jobs:
         run: Compress-Archive -Path build/intron.exe -DestinationPath intron-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: intron-x86_64-pc-windows-msvc
           path: intron-*.zip
@@ -132,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           merge-multiple: true
 
