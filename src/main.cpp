@@ -13,6 +13,10 @@ std::optional<std::string> tool_for_binary(std::string_view binary) {
         binary == "wasm-ld" || binary == "dsymutil") {
         return "llvm";
     }
+    // MSVC binaries
+    if (binary == "cl" || binary == "cl.exe" || binary == "link" || binary == "link.exe") {
+        return "msvc";
+    }
     // CMake binaries
     if (binary == "cmake" || binary == "ctest" || binary == "cpack" || binary == "ccmake") {
         return "cmake";
@@ -29,25 +33,56 @@ std::optional<std::string> tool_for_binary(std::string_view binary) {
 #endif
 constexpr auto intron_version = EXON_PKG_VERSION;
 
+// Parse --platform <name> from argv, returns the platform name if found
+std::optional<std::string> parse_platform_flag(int argc, char* argv[]) {
+    for (int i = 2; i < argc - 1; ++i) {
+        if (std::string_view{argv[i]} == "--platform") {
+            auto plat = std::string{argv[i + 1]};
+            if (!config::is_valid_platform(plat)) {
+                throw std::runtime_error(
+                    std::format("invalid platform '{}' (expected: linux, macos, windows)", plat));
+            }
+            return plat;
+        }
+    }
+    return std::nullopt;
+}
+
+// Count positional args (skip --platform <name> pairs)
+std::vector<std::string_view> positional_args(int argc, char* argv[]) {
+    std::vector<std::string_view> result;
+    for (int i = 2; i < argc; ++i) {
+        if (std::string_view{argv[i]} == "--platform") {
+            ++i; // skip value
+            continue;
+        }
+        result.push_back(argv[i]);
+    }
+    return result;
+}
+
 void print_usage() {
     std::println("intron {}", intron_version);
     std::println("");
     std::println("Usage: intron <command> [args...]");
     std::println("");
     std::println("Commands:");
-    std::println("  install [tool] [version]   Install toolchain(s) (reads .intron.toml if no args)");
-    std::println("  remove  <tool> <version>   Remove a toolchain");
-    std::println("  list                       List installed toolchains");
-    std::println("  which   <binary>           Print path to binary");
-    std::println("  default <tool> <version>   Set global default version");
-    std::println("  use     [tool] [version]   Set project toolchain in .intron.toml");
-    std::println("  update                     Check for updates");
-    std::println("  upgrade [tool]             Upgrade tools to latest");
-    std::println("  env                        Print environment variables");
-    std::println("  self-update                Update intron itself");
-    std::println("  help                       Show this message");
+    std::println("  install [tool] [version]               Install toolchain(s) (reads .intron.toml if no args)");
+    std::println("  remove  <tool> <version>               Remove a toolchain");
+    std::println("  list                                   List installed toolchains");
+    std::println("  which   <binary>                       Print path to binary");
+    std::println("  default <tool> <version> [--platform]  Set global default version");
+    std::println("  use     [tool] [version] [--platform]  Set project toolchain in .intron.toml");
+    std::println("  update                                 Check for updates");
+    std::println("  upgrade [tool]                         Upgrade tools to latest");
+    std::println("  env                                    Print environment variables");
+    std::println("  self-update                            Update intron itself");
+    std::println("  help                                   Show this message");
     std::println("");
-    std::println("Tools: llvm, cmake, ninja, wasi-sdk, wasmtime");
+    std::println("Tools: cmake, llvm, msvc, ninja, wasi-sdk, wasmtime");
+    std::println("");
+    std::println("Options:");
+    std::println("  --platform <name>  Target a specific platform section (linux, macos, windows)");
 }
 
 int cmd_install(int argc, char* argv[]) {
@@ -123,30 +158,41 @@ int cmd_which(int argc, char* argv[]) {
 }
 
 int cmd_default(int argc, char* argv[]) {
-    if (argc != 4) {
-        std::println(std::cerr, "Usage: intron default <tool> <version>");
+    auto platform = parse_platform_flag(argc, argv);
+    auto args = positional_args(argc, argv);
+
+    if (args.size() != 2) {
+        std::println(std::cerr, "Usage: intron default <tool> <version> [--platform <name>]");
         return 1;
     }
-    auto tool = std::string_view{argv[2]};
-    auto version = std::string_view{argv[3]};
+    auto tool = args[0];
+    auto version = args[1];
 
-    // Check if installed
-    auto path = installer::toolchain_path(tool, version);
-    if (!std::filesystem::exists(path)) {
-        std::println(std::cerr, "error: {} {} is not installed", tool, version);
-        std::println(std::cerr, "hint: run 'intron install {} {}'", tool, version);
-        return 1;
+    // System tools (e.g. msvc) don't have a toolchain path — skip installed check
+    if (!registry::is_system_tool(tool)) {
+        auto path = installer::toolchain_path(tool, version);
+        if (!std::filesystem::exists(path)) {
+            std::println(std::cerr, "error: {} {} is not installed", tool, version);
+            std::println(std::cerr, "hint: run 'intron install {} {}'", tool, version);
+            return 1;
+        }
     }
 
-    config::set_default(tool, version);
-    std::println("Set {} default to {}", tool, version);
+    config::set_default(tool, version, platform.value_or(""));
+    if (platform) {
+        std::println("Set {} default to {} (platform: {})", tool, version, *platform);
+    } else {
+        std::println("Set {} default to {}", tool, version);
+    }
     return 0;
 }
 
 int cmd_use(int argc, char* argv[]) {
-    auto existing = config::load_project_toolchain();
+    auto platform = parse_platform_flag(argc, argv);
+    auto args = positional_args(argc, argv);
+    auto config = config::load_full_project_config();
 
-    if (argc < 3) {
+    if (args.empty()) {
         // No args: write all effective defaults
         auto defaults = config::load_effective_defaults();
         if (defaults.empty()) {
@@ -155,17 +201,19 @@ int cmd_use(int argc, char* argv[]) {
             return 1;
         }
         for (auto const& [tool, version] : defaults) {
-            existing[tool] = version;
+            config.common[tool] = version;
             std::println("set {} {}", tool, version);
         }
     } else {
-        auto tool = std::string{argv[2]};
+        auto tool = std::string{args[0]};
         std::string version;
-        if (argc >= 4) {
-            version = argv[3];
-            auto dest = installer::toolchain_path(tool, version);
-            if (!std::filesystem::exists(dest))
-                std::println("warning: {} {} is not installed", tool, version);
+        if (args.size() >= 2) {
+            version = std::string{args[1]};
+            if (!registry::is_system_tool(tool)) {
+                auto dest = installer::toolchain_path(tool, version);
+                if (!std::filesystem::exists(dest))
+                    std::println("warning: {} {} is not installed", tool, version);
+            }
         } else {
             auto def = config::get_default(tool);
             if (!def) {
@@ -174,11 +222,17 @@ int cmd_use(int argc, char* argv[]) {
             }
             version = *def;
         }
-        existing[tool] = version;
-        std::println("set {} {}", tool, version);
+
+        if (platform) {
+            config.platforms[*platform][tool] = version;
+            std::println("set {} {} (platform: {})", tool, version, *platform);
+        } else {
+            config.common[tool] = version;
+            std::println("set {} {}", tool, version);
+        }
     }
 
-    config::write_project_config(existing);
+    config::write_project_config(config);
     std::println("wrote .intron.toml");
     return 0;
 }
@@ -200,6 +254,7 @@ int cmd_update() {
     if (current.empty()) {
         // Show latest versions for all tools if none installed
         for (auto tool : registry::supported_tools) {
+            if (registry::is_system_tool(tool)) continue;
             auto latest = installer::latest_version(tool);
             if (latest) {
                 std::println("{}: latest {}", tool, *latest);
@@ -210,6 +265,7 @@ int cmd_update() {
 
     bool has_update = false;
     for (auto const& [tool, version] : current) {
+        if (registry::is_system_tool(tool)) continue;
         auto latest = installer::latest_version(tool);
         if (!latest) {
             std::println("{} {}: could not check latest", tool, version);
@@ -252,6 +308,7 @@ int cmd_upgrade(int argc, char* argv[]) {
 
     int upgraded = 0;
     for (auto const& [tool, version] : current) {
+        if (registry::is_system_tool(tool)) continue;
         auto latest = installer::latest_version(tool);
         if (!latest) {
             std::println("{}: could not check latest version", tool);
@@ -373,11 +430,11 @@ int cmd_env() {
         return 1;
     }
 
-    // Collect bin directories for PATH (wasi-sdk is excluded to avoid
-    // clang binary conflicts with llvm; it is exposed via WASI_SDK_PATH instead)
+    // Collect bin directories for PATH (wasi-sdk and system tools are excluded)
     std::vector<std::string> paths;
     for (auto const& [tool, version] : defaults) {
         if (tool == "wasi-sdk") continue;
+        if (registry::is_system_tool(tool)) continue;
         auto base = installer::toolchain_path(tool, version);
         if (!std::filesystem::exists(base)) continue;
         if (tool == "ninja" || tool == "wasmtime") {
@@ -407,8 +464,9 @@ int cmd_env() {
 #endif
     }
 
-    // CC/CXX (when LLVM is set as default)
+    // CC/CXX
     if (defaults.contains("llvm")) {
+        // LLVM takes priority over MSVC for CC/CXX
         auto llvm_bin = installer::toolchain_path("llvm", defaults.at("llvm")) / "bin";
 #ifdef _WIN32
         if (std::filesystem::exists(llvm_bin / "clang-cl.exe")) {
@@ -419,6 +477,18 @@ int cmd_env() {
         if (std::filesystem::exists(llvm_bin / "clang")) {
             std::println("export CC=\"{}\";", (llvm_bin / "clang").string());
             std::println("export CXX=\"{}\";", (llvm_bin / "clang++").string());
+        }
+#endif
+    } else if (defaults.contains("msvc")) {
+#ifdef _WIN32
+        // Detect MSVC via vswhere and set CC/CXX to cl.exe
+        auto msvc = installer::msvc_path();
+        if (msvc) {
+            auto cl = *msvc / "bin" / "Hostx64" / "x64" / "cl.exe";
+            if (std::filesystem::exists(cl)) {
+                std::println("$env:CC = \"{}\";", cl.string());
+                std::println("$env:CXX = \"{}\";", cl.string());
+            }
         }
 #endif
     }

@@ -83,6 +83,27 @@ void test_latest_release_api() {
     check(intron.contains("misut/intron"), "intron api url");
 }
 
+void test_resolve_msvc() {
+    auto info = registry::resolve("msvc", "latest");
+    check(info.name == "msvc", "msvc name");
+    check(info.version == "latest", "msvc version");
+    check(info.url.empty(), "msvc url empty (system tool)");
+    check(info.archive_type.empty(), "msvc archive_type empty");
+    check(registry::is_system_tool("msvc"), "msvc is system tool");
+    check(!registry::is_system_tool("llvm"), "llvm is not system tool");
+}
+
+void test_platform_name() {
+    auto name = registry::platform_name();
+#if defined(__APPLE__)
+    check(name == "macos", "platform_name is macos");
+#elif defined(__linux__)
+    check(name == "linux", "platform_name is linux");
+#elif defined(_WIN32)
+    check(name == "windows", "platform_name is windows");
+#endif
+}
+
 void test_detect_platform() {
     auto plat = registry::detect_platform();
 #if defined(__APPLE__)
@@ -102,6 +123,8 @@ int main() {
     test_resolve_cmake();
     test_resolve_ninja();
     test_resolve_wasi_sdk();
+    test_resolve_msvc();
+    test_platform_name();
     test_latest_release_api();
     test_detect_platform();
 
