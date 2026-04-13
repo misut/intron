@@ -323,9 +323,71 @@ bool verify_installed_binary(std::filesystem::path const& dest, registry::ToolIn
     return true;
 }
 
+// Detect MSVC installation via vswhere (Windows only)
+std::optional<std::filesystem::path> detect_msvc_path() {
+    if constexpr (!is_windows) return std::nullopt;
+
+    // vswhere ships with VS Build Tools / VS Installer
+    std::string vswhere_cmd;
+    auto const* pf86 = std::getenv("ProgramFiles(x86)");
+    if (pf86) {
+        auto vswhere = std::filesystem::path{pf86}
+            / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+        if (std::filesystem::exists(vswhere))
+            vswhere_cmd = std::format("\"{}\"", vswhere.string());
+    }
+    if (vswhere_cmd.empty()) {
+        // Try PATH
+        if (check_command("vswhere"))
+            vswhere_cmd = "vswhere";
+        else
+            return std::nullopt;
+    }
+
+    auto install_path = capture(
+        std::format("{} -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath",
+            vswhere_cmd));
+    if (install_path.empty()) return std::nullopt;
+
+    // Find the latest MSVC toolset version
+    auto vc_tools = std::filesystem::path{install_path} / "VC" / "Tools" / "MSVC";
+    if (!std::filesystem::exists(vc_tools)) return std::nullopt;
+
+    std::string latest_ver;
+    for (auto const& entry : std::filesystem::directory_iterator{vc_tools}) {
+        if (!entry.is_directory()) continue;
+        auto ver = entry.path().filename().string();
+        if (ver > latest_ver) latest_ver = ver;
+    }
+    if (latest_ver.empty()) return std::nullopt;
+
+    return vc_tools / latest_ver;
+}
+
 } // namespace detail
 
+// Install a system tool (e.g. msvc) — detect and verify, no download
+bool install_system_tool(registry::ToolInfo const& info) {
+    if (info.name == "msvc") {
+        auto path = detail::detect_msvc_path();
+        if (!path) {
+            std::println(std::cerr,
+                "error: MSVC is not installed\n"
+                "hint: install Visual Studio or Build Tools with C++ workload");
+            return false;
+        }
+        std::println("msvc detected at {}", path->string());
+        return true;
+    }
+    std::println(std::cerr, "error: unknown system tool: {}", info.name);
+    return false;
+}
+
 bool install(registry::ToolInfo const& info) {
+    // System tools (e.g. msvc) are detected, not downloaded
+    if (registry::is_system_tool(info.name))
+        return install_system_tool(info);
+
     auto dest = toolchain_path(info.name, info.version);
 
     // Already installed
@@ -334,7 +396,7 @@ bool install(registry::ToolInfo const& info) {
         return true;
     }
 
-    // Preflight check for system tools
+    // Preflight check
     if (!detail::check_command("curl")) {
         std::println(std::cerr, "error: curl is required but not found");
         return false;
@@ -486,6 +548,10 @@ std::optional<std::filesystem::path> which(
     }
 #endif
     return std::nullopt;
+}
+
+std::optional<std::filesystem::path> msvc_path() {
+    return detail::detect_msvc_path();
 }
 
 std::optional<std::string> latest_version(std::string_view tool) {

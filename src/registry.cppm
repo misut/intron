@@ -20,6 +20,18 @@ struct Platform {
     Arch arch;
 };
 
+constexpr std::string_view platform_name() {
+#if defined(__APPLE__)
+    return "macos";
+#elif defined(__linux__)
+    return "linux";
+#elif defined(_WIN32)
+    return "windows";
+#else
+    #error "Unsupported platform"
+#endif
+}
+
 Platform detect_platform() {
 #if defined(__APPLE__)
     #if defined(__aarch64__) || defined(__arm64__)
@@ -155,6 +167,16 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
         };
     }
 
+    if (tool == "msvc") {
+        return {
+            .name = "msvc",
+            .version = std::string{version},
+            .url = {},  // system tool — not downloadable
+            .archive_type = {},
+            .strip_prefix = {},
+        };
+    }
+
     if (tool == "ninja") {
         std::string filename;
         if (plat.os == OS::macOS) {
@@ -205,7 +227,11 @@ std::string latest_release_api(std::string_view tool) {
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
-constexpr std::array<std::string_view, 5> supported_tools = {"cmake", "llvm", "ninja", "wasi-sdk", "wasmtime"};
+constexpr std::array<std::string_view, 6> supported_tools = {"cmake", "llvm", "msvc", "ninja", "wasi-sdk", "wasmtime"};
+
+constexpr bool is_system_tool(std::string_view tool) {
+    return tool == "msvc";
+}
 
 // Platform triple for release binaries
 std::string platform_triple() {
