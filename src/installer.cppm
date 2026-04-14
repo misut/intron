@@ -255,11 +255,14 @@ void setup_llvm_config(std::filesystem::path const& dest, std::string_view versi
             std::filesystem::create_directories(cfg_dir);
             auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
             {
+                auto lib_dir = dest / "lib";
                 auto out = std::ofstream{cfg_file};
                 if (out) {
                     out << std::format("-isysroot {}\n", sdk_path);
                     out << "-stdlib=libc++\n";
                     out << "-lc++\n";
+                    out << std::format("-L{}\n", lib_dir.string());
+                    out << std::format("-Wl,-rpath,{}\n", lib_dir.string());
                 }
             }
 
@@ -291,6 +294,164 @@ void setup_llvm_config(std::filesystem::path const& dest, std::string_view versi
             std::format("--config-system-dir={}", cfg_dir.string()));
         std::println("Generated clang config: {}", cfg_file.string());
     }
+}
+
+// Rebuild libc++ and libc++abi with hermetic static library flags so
+// the toolchain's C++ standard library can coexist with the macOS
+// system libc++ (loaded by Metal/Foundation frameworks). Uses a custom
+// ABI namespace (__intron) and hidden symbols to avoid ODR violations.
+void rebuild_hermetic_libcxx(std::filesystem::path const& dest, std::string_view version) {
+    std::println("Rebuilding libc++ with hermetic ABI namespace...");
+
+    auto tmp = std::filesystem::temp_directory_path() / "intron_libcxx_build";
+    std::filesystem::remove_all(tmp);
+    std::filesystem::create_directories(tmp);
+
+    // Download llvm-project source (just runtimes needed)
+    auto src_name = std::format("llvm-project-{}.src", version);
+    auto tarball = std::format("{}.tar.xz", src_name);
+    auto tarball_url = std::format(
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}",
+        version, tarball);
+    auto tarball_path = tmp / tarball;
+
+    std::println("  Downloading libc++ source...");
+    auto dl_cmd = std::format("curl -fSL --compressed -o '{}' '{}'",
+        tarball_path.string(), tarball_url);
+    if (run(dl_cmd) != 0) {
+        std::println(std::cerr, "warning: hermetic libc++ rebuild skipped (download failed)");
+        std::filesystem::remove_all(tmp);
+        return;
+    }
+
+    // Extract just the runtimes directory
+    std::println("  Extracting...");
+    auto extract_cmd = std::format(
+        "tar -xf '{}' -C '{}' '{}/runtimes' '{}/libcxx' '{}/libcxxabi' '{}/cmake' '{}/llvm' '{}/libc'",
+        tarball_path.string(), tmp.string(),
+        src_name, src_name, src_name, src_name, src_name, src_name);
+    if (run(extract_cmd) != 0) {
+        std::println(std::cerr, "warning: hermetic libc++ rebuild skipped (extraction failed)");
+        std::filesystem::remove_all(tmp);
+        return;
+    }
+
+    auto src_dir = tmp / src_name;
+    auto build_dir = tmp / "build";
+    std::filesystem::create_directories(build_dir);
+
+    // Find cmake and ninja from the toolchain
+    auto clang = dest / "bin" / "clang";
+    auto clangxx = dest / "bin" / "clang++";
+    // Use the real clang, not the wrapper (which may reference the config
+    // we just wrote — and that config may reference libc++ flags that
+    // won't work for building libc++ itself).
+    auto clang_real = dest / "bin" / "clang.orig";
+    if (!std::filesystem::exists(clang_real))
+        clang_real = clang;
+    auto clangxx_real = dest / "bin" / "clang++.orig";
+    if (!std::filesystem::exists(clangxx_real))
+        clangxx_real = clangxx;
+
+    // Detect sysroot on macOS
+    auto plat = registry::detect_platform();
+    std::string sysroot_flag;
+    if (plat.os == registry::OS::macOS) {
+        auto sdk = capture("xcrun --show-sdk-path");
+        if (!sdk.empty())
+            sysroot_flag = std::format(" -DCMAKE_OSX_SYSROOT={}", sdk);
+    }
+
+    // Find cmake and ninja from intron's toolchains
+    auto home = intron_home();
+    std::string cmake_bin = "cmake";
+    std::string ninja_bin = "ninja";
+    for (auto const& entry : std::filesystem::directory_iterator(home / "toolchains" / "cmake")) {
+        auto candidate = entry.path() / "bin" / "cmake";
+        if (std::filesystem::exists(candidate)) { cmake_bin = candidate.string(); break; }
+    }
+    for (auto const& entry : std::filesystem::directory_iterator(home / "toolchains" / "ninja")) {
+        auto candidate = entry.path() / "ninja";
+        if (std::filesystem::exists(candidate)) { ninja_bin = candidate.string(); break; }
+    }
+
+    // Configure
+    std::println("  Configuring hermetic libc++...");
+    auto cmake_cmd = std::format(
+        "'{}' -G Ninja -DCMAKE_MAKE_PROGRAM='{}' -S '{}' -B '{}'",
+        cmake_bin, ninja_bin,
+        (src_dir / "runtimes").string(), build_dir.string());
+    cmake_cmd += std::format(
+        " -DCMAKE_C_COMPILER='{}'"
+        " -DCMAKE_CXX_COMPILER='{}'"
+        " -DLLVM_PATH='{}'"
+        " -DLLVM_ENABLE_RUNTIMES='libcxx;libcxxabi'",
+        clang_real.string(), clangxx_real.string(),
+        src_dir.string());
+    cmake_cmd += " -DLIBCXXABI_USE_LLVM_UNWINDER=OFF"
+        " -DLIBCXX_INCLUDE_TESTS=OFF"
+        " -DLIBCXX_INCLUDE_BENCHMARKS=OFF"
+        " -DLIBCXXABI_INCLUDE_TESTS=OFF"
+        " -DLIBCXX_ABI_NAMESPACE=__intron"
+        " -DLIBCXX_ENABLE_SHARED=ON"
+        " -DLIBCXX_ENABLE_STATIC=ON"
+        " -DCMAKE_BUILD_TYPE=Release";
+    cmake_cmd += sysroot_flag;
+    if (run(cmake_cmd) != 0) {
+        std::println(std::cerr, "warning: hermetic libc++ rebuild skipped (cmake configure failed)");
+        std::filesystem::remove_all(tmp);
+        return;
+    }
+
+    // Build
+    std::println("  Building...");
+    auto build_cmd = std::format(
+        "'{}' --build '{}' --target cxx_static cxxabi_static cxx_shared cxxabi_shared",
+        cmake_bin, build_dir.string());
+    if (run(build_cmd) != 0) {
+        std::println(std::cerr, "warning: hermetic libc++ rebuild skipped (build failed)");
+        std::filesystem::remove_all(tmp);
+        return;
+    }
+
+    // Copy results
+    std::println("  Installing hermetic libc++ to toolchain...");
+    auto lib_dir = dest / "lib";
+    auto include_dir = dest / "include" / "c++" / "v1";
+
+    auto built_lib = build_dir / "lib";
+    for (auto const& name : {"libc++.a", "libc++abi.a"}) {
+        auto src = built_lib / name;
+        if (std::filesystem::exists(src))
+            std::filesystem::copy_file(src, lib_dir / name,
+                std::filesystem::copy_options::overwrite_existing);
+    }
+    // Also copy dynamic libs + versioned symlinks
+    for (auto const& name : {
+        "libc++.dylib", "libc++.1.dylib", "libc++.1.0.dylib",
+        "libc++abi.dylib", "libc++abi.1.dylib", "libc++abi.1.0.dylib",
+        "libc++.so", "libc++.so.1", "libc++.so.1.0",
+        "libc++abi.so", "libc++abi.so.1", "libc++abi.so.1.0"
+    }) {
+        auto src = built_lib / name;
+        if (std::filesystem::exists(src)) {
+            auto dst = lib_dir / name;
+            std::filesystem::remove(dst);
+            std::filesystem::copy(src, dst,
+                std::filesystem::copy_options::overwrite_existing |
+                std::filesystem::copy_options::copy_symlinks);
+        }
+    }
+
+    // Copy __config_site header (defines _LIBCPP_ABI_NAMESPACE=__intron)
+    auto config_site = build_dir / "include" / "c++" / "v1" / "__config_site";
+    if (std::filesystem::exists(config_site))
+        std::filesystem::copy_file(config_site, include_dir / "__config_site",
+            std::filesystem::copy_options::overwrite_existing);
+
+    // Cleanup
+    std::filesystem::remove_all(tmp);
+    std::println("  Hermetic libc++ installed (ABI namespace: __intron)");
 }
 
 bool verify_installed_binary(std::filesystem::path const& dest, registry::ToolInfo const& info) {
@@ -484,8 +645,10 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::rename(staging, dest);
 
     // Generate clang config + wrapper scripts after LLVM install
-    if (info.name == "llvm")
+    if (info.name == "llvm") {
         detail::setup_llvm_config(dest, info.version);
+        detail::rebuild_hermetic_libcxx(dest, info.version);
+    }
 
     // Verify the installed binary is executable on this platform
     if (!detail::verify_installed_binary(dest, info)) {
