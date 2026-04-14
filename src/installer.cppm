@@ -362,17 +362,21 @@ void rebuild_hermetic_libcxx(std::filesystem::path const& dest, std::string_view
             sysroot_flag = std::format(" -DCMAKE_OSX_SYSROOT={}", sdk);
     }
 
-    // Find cmake and ninja from intron's toolchains
+    // Find cmake and ninja from intron's toolchains (fall back to system PATH)
     auto home = intron_home();
     std::string cmake_bin = "cmake";
     std::string ninja_bin = "ninja";
-    for (auto const& entry : std::filesystem::directory_iterator(home / "toolchains" / "cmake")) {
-        auto candidate = entry.path() / "bin" / "cmake";
-        if (std::filesystem::exists(candidate)) { cmake_bin = candidate.string(); break; }
+    if (auto cmake_dir = home / "toolchains" / "cmake"; std::filesystem::is_directory(cmake_dir)) {
+        for (auto const& entry : std::filesystem::directory_iterator(cmake_dir)) {
+            auto candidate = entry.path() / "bin" / "cmake";
+            if (std::filesystem::exists(candidate)) { cmake_bin = candidate.string(); break; }
+        }
     }
-    for (auto const& entry : std::filesystem::directory_iterator(home / "toolchains" / "ninja")) {
-        auto candidate = entry.path() / "ninja";
-        if (std::filesystem::exists(candidate)) { ninja_bin = candidate.string(); break; }
+    if (auto ninja_dir = home / "toolchains" / "ninja"; std::filesystem::is_directory(ninja_dir)) {
+        for (auto const& entry : std::filesystem::directory_iterator(ninja_dir)) {
+            auto candidate = entry.path() / "ninja";
+            if (std::filesystem::exists(candidate)) { ninja_bin = candidate.string(); break; }
+        }
     }
 
     // Configure
