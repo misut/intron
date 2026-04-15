@@ -16,7 +16,11 @@ void test_resolve_llvm() {
     check(info.version == "22.1.2", "llvm version");
     check(info.archive_type == "tar.xz", "llvm archive_type");
     check(info.url.contains("llvmorg-22.1.2"), "llvm url contains tag");
+#if defined(_WIN32)
+    check(info.url.contains("clang+llvm-22.1.2-"), "llvm url contains filename");
+#else
     check(info.url.contains("LLVM-22.1.2-"), "llvm url contains filename");
+#endif
     check(!info.strip_prefix.empty(), "llvm strip_prefix not empty");
     check(info.checksum_url.empty(), "llvm has no checksum url");
 }
@@ -25,7 +29,11 @@ void test_resolve_cmake() {
     auto info = registry::resolve("cmake", "4.0.3");
     check(info.name == "cmake", "cmake name");
     check(info.version == "4.0.3", "cmake version");
+#if defined(_WIN32)
+    check(info.archive_type == "zip", "cmake archive_type");
+#else
     check(info.archive_type == "tar.gz", "cmake archive_type");
+#endif
     check(info.url.contains("/v4.0.3/"), "cmake url contains version");
     check(!info.strip_prefix.empty(), "cmake strip_prefix not empty");
     check(!info.checksum_url.empty(), "cmake has checksum url");
@@ -110,10 +118,12 @@ void test_detect_platform() {
     check(plat.os == registry::OS::macOS, "platform is macOS");
 #elif defined(__linux__)
     check(plat.os == registry::OS::Linux, "platform is Linux");
+#elif defined(_WIN32)
+    check(plat.os == registry::OS::Windows, "platform is Windows");
 #endif
 #if defined(__aarch64__) || defined(__arm64__)
     check(plat.arch == registry::Arch::ARM64, "arch is ARM64");
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) || defined(_M_X64)
     check(plat.arch == registry::Arch::X64, "arch is X64");
 #endif
 }
