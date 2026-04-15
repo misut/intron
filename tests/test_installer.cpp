@@ -13,10 +13,10 @@ void check(bool cond, std::string_view msg) {
 void test_toolchain_path() {
     auto path = installer::toolchain_path("llvm", "22.1.2");
     auto str = path.string();
-    check(str.contains(".intron/toolchains/llvm/22.1.2"), "llvm toolchain path");
+    check(path.generic_string().contains(".intron/toolchains/llvm/22.1.2"), "llvm toolchain path");
 
     auto path2 = installer::toolchain_path("ninja", "1.12.1");
-    check(path2.string().contains(".intron/toolchains/ninja/1.12.1"), "ninja toolchain path");
+    check(path2.generic_string().contains(".intron/toolchains/ninja/1.12.1"), "ninja toolchain path");
 }
 
 void test_intron_home() {

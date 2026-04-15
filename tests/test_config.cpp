@@ -13,7 +13,7 @@ void check(bool cond, std::string_view msg) {
 
 void test_config_path() {
     auto path = config::config_path();
-    check(path.string().contains(".intron/config.toml"), "config path");
+    check(path.generic_string().contains(".intron/config.toml"), "config path");
 }
 
 void test_set_and_load_defaults() {
