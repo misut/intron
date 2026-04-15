@@ -379,12 +379,22 @@ void rebuild_hermetic_libcxx(std::filesystem::path const& dest, std::string_view
         }
     }
 
-    // Configure
+    // Configure — prefer Ninja, fall back to Unix Makefiles (make is
+    // always available on macOS via Xcode CLT)
     std::println("  Configuring hermetic libc++...");
-    auto cmake_cmd = std::format(
-        "'{}' -G Ninja -DCMAKE_MAKE_PROGRAM='{}' -S '{}' -B '{}'",
-        cmake_bin, ninja_bin,
-        (src_dir / "runtimes").string(), build_dir.string());
+    bool has_ninja = (ninja_bin != "ninja") || check_command("ninja");
+    std::string cmake_cmd;
+    if (has_ninja) {
+        cmake_cmd = std::format(
+            "'{}' -G Ninja -DCMAKE_MAKE_PROGRAM='{}' -S '{}' -B '{}'",
+            cmake_bin, ninja_bin,
+            (src_dir / "runtimes").string(), build_dir.string());
+    } else {
+        cmake_cmd = std::format(
+            "'{}' -G 'Unix Makefiles' -S '{}' -B '{}'",
+            cmake_bin,
+            (src_dir / "runtimes").string(), build_dir.string());
+    }
     cmake_cmd += std::format(
         " -DCMAKE_C_COMPILER='{}'"
         " -DCMAKE_CXX_COMPILER='{}'"
@@ -651,7 +661,8 @@ bool install(registry::ToolInfo const& info) {
     // Generate clang config + wrapper scripts after LLVM install
     if (info.name == "llvm") {
         detail::setup_llvm_config(dest, info.version);
-        detail::rebuild_hermetic_libcxx(dest, info.version);
+        if (registry::detect_platform().os == registry::OS::macOS)
+            detail::rebuild_hermetic_libcxx(dest, info.version);
     }
 
     // Verify the installed binary is executable on this platform
