@@ -45,7 +45,7 @@ jobs:
         run: |
           # Pin to a known-good version, not latest, to avoid chicken-and-egg
           # if the most recent release is broken (e.g. has zero assets).
-          gh release download v0.18.2 -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
+          gh release download v0.17.0 -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
           tar xzf intron-*.tar.gz && sudo mv intron /usr/local/bin/ && rm intron-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
