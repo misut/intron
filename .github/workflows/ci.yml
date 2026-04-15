@@ -53,9 +53,9 @@ jobs:
       - name: Install toolchains (macOS)
         if: runner.os == 'macOS'
         run: |
-          intron install llvm 22.1.2
           intron install cmake 4.3.1
           intron install ninja 1.13.2
+          intron install llvm 22.1.2
           intron default llvm 22.1.2
           intron default cmake 4.3.1
           intron default ninja 1.13.2
