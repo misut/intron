@@ -8,5 +8,11 @@ type = "bin"
 standard = 23
 
 [dependencies]
-"github.com/misut/cppx" = "0.3.1"
+"github.com/misut/cppx" = "1.0.3"
 "github.com/misut/tomlcpp" = "0.3.0"
+
+[target.'cfg(os = "linux")'.build]
+ldflags = ["-lssl", "-lcrypto"]
+
+[target.'cfg(os = "macos")'.build]
+ldflags = ["-framework", "Security", "-Wl,-framework,CoreFoundation"]

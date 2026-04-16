@@ -1,6 +1,7 @@
 import std;
 import installer;
 import config;
+import net;
 
 namespace {
 
@@ -32,6 +33,10 @@ std::optional<std::string> tool_for_binary(std::string_view binary) {
 #define EXON_PKG_VERSION "dev"
 #endif
 constexpr auto intron_version = EXON_PKG_VERSION;
+
+std::string user_agent() {
+    return std::format("intron/{}", intron_version);
+}
 
 // Parse --platform <name> from argv, returns the platform name if found
 std::optional<std::string> parse_platform_flag(int argc, char* argv[]) {
@@ -364,12 +369,8 @@ int cmd_self_update(std::string_view self_path) {
         "https://github.com/misut/intron/releases/download/v{}/intron-v{}-{}{}",
         *latest, *latest, triple, ext);
 
-#ifdef _WIN32
-    auto dl_cmd = std::format("curl -fsSL -o \"{}\" \"{}\"", archive.string(), url);
-#else
-    auto dl_cmd = std::format("curl -fsSL -o '{}' '{}'", archive.string(), url);
-#endif
-    if (std::system(dl_cmd.c_str()) != 0) {
+    auto dl = net::download_file(url, archive, net::user_agent_headers(user_agent()));
+    if (!dl) {
         std::println(std::cerr, "error: download failed");
         std::filesystem::remove_all(tmp);
         return 1;

@@ -1,6 +1,7 @@
 export module installer;
 import std;
 import cppx.env.system;
+import net;
 export import registry;
 
 export namespace installer {
@@ -29,6 +30,10 @@ constexpr bool is_windows =
 
 int run(std::string const& cmd) {
     return std::system(cmd.c_str());
+}
+
+std::string user_agent() {
+    return std::format("intron/{}", EXON_PKG_VERSION);
 }
 
 std::string capture(std::string const& cmd) {
@@ -164,15 +169,9 @@ bool verify_checksum(std::filesystem::path const& archive,
                      std::filesystem::path const& downloads,
                      std::string const& checksum_url) {
     auto checksum_file = downloads / "checksums.txt";
-    std::string dl_cmd;
-    if constexpr (is_windows) {
-        dl_cmd = std::format("curl -fsSL --compressed -o \"{}\" \"{}\"",
-            checksum_file.string(), checksum_url);
-    } else {
-        dl_cmd = std::format("curl -fsSL --compressed -o '{}' '{}'",
-            checksum_file.string(), checksum_url);
-    }
-    if (run(dl_cmd) != 0) {
+    auto dl = net::download_file(
+        checksum_url, checksum_file, net::user_agent_headers(user_agent()));
+    if (!dl) {
         std::println("warning: could not download checksum file, skipping verification");
         return true;
     }
@@ -234,7 +233,7 @@ void write_clang_wrapper(std::filesystem::path const& bin_dir,
     }
 }
 
-void setup_llvm_config(std::filesystem::path const& dest, std::string_view version) {
+void setup_llvm_config(std::filesystem::path const& dest, std::string_view /*version*/) {
     auto plat = registry::detect_platform();
     auto clang = dest / "bin" / "clang";
     auto target = capture(std::format("'{}' -dumpmachine", clang.string()));
@@ -499,10 +498,10 @@ std::optional<std::map<std::string, std::string>> current_msvc_environment(
     env["INCLUDE"] = include;
     env["LIB"] = lib;
     env["LIBPATH"] = libpath;
-    if (auto path = std::getenv("Path"); path && *path)
-        env["Path"] = path;
-    else if (auto path = std::getenv("PATH"); path && *path)
-        env["Path"] = path;
+    if (auto path_env = std::getenv("Path"); path_env && *path_env)
+        env["Path"] = path_env;
+    else if (auto path_upper = std::getenv("PATH"); path_upper && *path_upper)
+        env["Path"] = path_upper;
 
     auto vctools = std::getenv("VCToolsInstallDir");
     if (vctools && *vctools) {
@@ -554,11 +553,6 @@ bool install(registry::ToolInfo const& info) {
         return true;
     }
 
-    // Preflight check
-    if (!detail::check_command("curl")) {
-        std::println(std::cerr, "error: curl is required but not found");
-        return false;
-    }
     if ((info.archive_type == "tar.xz" || info.archive_type == "tar.gz")
         && !detail::check_command("tar")) {
         std::println(std::cerr, "error: tar is required but not found");
@@ -593,15 +587,9 @@ bool install(registry::ToolInfo const& info) {
         std::println("Using cached archive for {} {}...", info.name, info.version);
     } else {
         std::println("Downloading {} {}...", info.name, info.version);
-        std::string curl_cmd;
-        if constexpr (detail::is_windows) {
-            curl_cmd = std::format("curl -fSL --compressed -o \"{}\" \"{}\"",
-                archive_path.string(), info.url);
-        } else {
-            curl_cmd = std::format("curl -fSL --compressed -o '{}' '{}'",
-                archive_path.string(), info.url);
-        }
-        if (detail::run(curl_cmd) != 0) {
+        auto dl = net::download_file(
+            info.url, archive_path, net::user_agent_headers(detail::user_agent()));
+        if (!dl) {
             std::println(std::cerr, "error: download failed");
             std::filesystem::remove(archive_path);
             cleanup();
@@ -749,31 +737,10 @@ std::optional<MsvcEnvironment> msvc_environment() {
 
 std::optional<std::string> latest_version(std::string_view tool) {
     auto api_url = registry::latest_release_api(tool);
-    std::string curl_cmd;
-    if constexpr (detail::is_windows) {
-        curl_cmd = std::format("curl -fsSL \"{}\"", api_url);
-    } else {
-        curl_cmd = std::format("curl -fsSL '{}'", api_url);
-    }
-    auto json = detail::capture(curl_cmd);
-    if (json.empty()) return std::nullopt;
-
-    auto pos = json.find("\"tag_name\"");
-    if (pos == std::string::npos) return std::nullopt;
-    auto colon = json.find(':', pos);
-    auto quote1 = json.find('"', colon + 1);
-    auto quote2 = json.find('"', quote1 + 1);
-    if (quote1 == std::string::npos || quote2 == std::string::npos) return std::nullopt;
-
-    auto tag = json.substr(quote1 + 1, quote2 - quote1 - 1);
-
-    if (tag.starts_with("v")) {
-        return tag.substr(1);
-    }
-    if (auto dash = tag.rfind('-'); dash != std::string::npos) {
-        return tag.substr(dash + 1);
-    }
-    return tag;
+    auto json = net::get_text(
+        api_url, net::github_api_headers(detail::user_agent()));
+    if (!json) return std::nullopt;
+    return net::latest_version_from_release_json(*json);
 }
 
 } // namespace installer

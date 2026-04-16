@@ -66,11 +66,13 @@ From a **Visual Studio Developer Command Prompt** (or PowerShell for VS 2022):
 
 ```powershell
 git clone https://github.com/misut/intron
-git clone https://github.com/misut/tomlcpp --branch v0.1.0
+git clone https://github.com/misut/tomlcpp --branch v0.3.0
+git clone https://github.com/misut/cppx --branch v1.0.3
 cd intron
 cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
-  -DTOMLCPP_DIR=..\tomlcpp
+  -DTOMLCPP_DIR=..\tomlcpp `
+  -DCPPX_DIR=..\cppx
 cmake --build build
 .\build\intron.exe help
 ```

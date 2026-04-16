@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v0.3.1
+    GIT_TAG v1.0.3
     GIT_SHALLOW ON
 )
 FetchContent_Declare(tomlcpp
@@ -32,6 +32,7 @@ target_sources(intron-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/config.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/installer.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
 )
 target_link_libraries(intron-modules PUBLIC
@@ -48,11 +49,32 @@ target_link_libraries(intron PRIVATE intron-modules)
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/config.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/installer.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
     "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.18.3\""
 )
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(intron-modules PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(intron-modules PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()
 
 add_executable(test-test_config)
 target_sources(test-test_config PRIVATE
@@ -62,6 +84,26 @@ target_link_libraries(test-test_config PRIVATE
     intron-modules
 )
 
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(test-test_config PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(test-test_config PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()
+
 add_executable(test-test_installer)
 target_sources(test-test_installer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_installer.cpp
@@ -70,6 +112,26 @@ target_link_libraries(test-test_installer PRIVATE
     intron-modules
 )
 
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(test-test_installer PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(test-test_installer PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()
+
 add_executable(test-test_registry)
 target_sources(test-test_registry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_registry.cpp
@@ -77,3 +139,23 @@ target_sources(test-test_registry PRIVATE
 target_link_libraries(test-test_registry PRIVATE
     intron-modules
 )
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(test-test_registry PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(test-test_registry PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()

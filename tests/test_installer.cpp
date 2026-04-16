@@ -1,5 +1,6 @@
 import std;
 import installer;
+import net;
 
 int failures = 0;
 
@@ -37,6 +38,29 @@ void test_list_installed_empty_version() {
     check(!result.has_value(), "which returns nullopt for missing version");
 }
 
+void test_latest_version_from_release_json() {
+    auto version = net::latest_version_from_release_json(
+        R"({"tag_name":"v0.18.3"})");
+    check(version.has_value(), "release json parsed");
+    check(*version == "0.18.3", "leading v removed");
+
+    auto dashed = net::latest_version_from_release_json(
+        R"({"tag_name":"llvmorg-20.1.0"})");
+    check(dashed.has_value(), "dash tag parsed");
+    check(*dashed == "20.1.0", "suffix extracted from dashed tag");
+
+    auto missing = net::latest_version_from_release_json(
+        R"({"name":"missing"})");
+    check(!missing.has_value(), "missing tag_name returns nullopt");
+}
+
+void test_github_api_headers() {
+    auto hdrs = net::github_api_headers("intron/test");
+    check(hdrs.get("user-agent") == "intron/test", "github api user-agent");
+    check(hdrs.get("accept") == "application/vnd.github+json",
+          "github api accept header");
+}
+
 void test_msvc_helper_paths() {
     auto root = std::filesystem::path{"C:/VS/VC/Tools/MSVC/14.40.33807"};
     auto bin = installer::msvc_bin_path(root);
@@ -71,6 +95,8 @@ int main() {
     test_intron_home();
     test_which_not_installed();
     test_list_installed_empty_version();
+    test_latest_version_from_release_json();
+    test_github_api_headers();
     test_msvc_helper_paths();
     test_msvc_environment_smoke();
 
