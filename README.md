@@ -67,7 +67,7 @@ From a **Visual Studio Developer Command Prompt** (or PowerShell for VS 2022):
 ```powershell
 git clone https://github.com/misut/intron
 git clone https://github.com/misut/tomlcpp --branch v0.3.0
-git clone https://github.com/misut/cppx --branch v1.0.4
+git clone https://github.com/misut/cppx --branch v1.0.5
 cd intron
 cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
