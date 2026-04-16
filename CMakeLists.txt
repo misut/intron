@@ -53,7 +53,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.18.3\""
+    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.18.4\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -69,6 +69,26 @@ if(PROJECT_IS_TOP_LEVEL)
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 
         target_link_options(intron-modules PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(intron PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(intron PRIVATE
             -framework
             Security
             -Wl,-framework,CoreFoundation
