@@ -134,3 +134,16 @@ jobs:
 
       - name: Verify
         run: .\build\intron.exe help
+
+      - name: Verify Windows env output
+        shell: pwsh
+        run: |
+          .\build\intron.exe default msvc 2022
+          $envOutput = & .\build\intron.exe env
+          $envOutput | Out-Host
+
+          foreach ($needle in @('$env:PATH =', '$env:CC =', '$env:CXX =', '$env:INCLUDE =', '$env:LIB =', '$env:LIBPATH =', 'Hostx64\x64')) {
+            if (-not ($envOutput | Select-String -SimpleMatch $needle)) {
+              throw "missing expected intron env output: $needle"
+            }
+          }

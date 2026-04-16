@@ -364,7 +364,72 @@ std::optional<std::filesystem::path> detect_msvc_path() {
     return vc_tools / latest_ver;
 }
 
+std::filesystem::path msvc_bin_path(std::filesystem::path const& root) {
+    return root / "bin" / "Hostx64" / "x64";
+}
+
+std::filesystem::path msvc_vcvars64_path(std::filesystem::path const& root) {
+    return root.parent_path().parent_path().parent_path() / "Auxiliary" / "Build" / "vcvars64.bat";
+}
+
+std::filesystem::path msvc_asan_runtime_path(std::filesystem::path const& root) {
+    return msvc_bin_path(root) / "clang_rt.asan_dynamic-x86_64.dll";
+}
+
+std::map<std::string, std::string> parse_environment_block(std::string_view text) {
+    std::map<std::string, std::string> env;
+    std::size_t start = 0;
+    while (start < text.size()) {
+        auto end = text.find('\n', start);
+        if (end == std::string_view::npos)
+            end = text.size();
+        auto line = text.substr(start, end - start);
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+            line.remove_suffix(1);
+        auto eq = line.find('=');
+        if (eq != std::string_view::npos && eq != 0) {
+            env.emplace(std::string{line.substr(0, eq)}, std::string{line.substr(eq + 1)});
+        }
+        start = end + 1;
+    }
+    return env;
+}
+
+std::optional<std::map<std::string, std::string>> capture_msvc_environment(
+    std::filesystem::path const& root) {
+    if constexpr (!is_windows)
+        return std::nullopt;
+
+    auto vcvars = msvc_vcvars64_path(root);
+    if (!std::filesystem::exists(vcvars))
+        return std::nullopt;
+
+    auto script = std::filesystem::temp_directory_path() / "intron_msvc_env.cmd";
+    {
+        auto out = std::ofstream{script};
+        if (!out)
+            return std::nullopt;
+        out << "@echo off\n";
+        out << std::format("call \"{}\" >nul\n", vcvars.string());
+        out << "set\n";
+    }
+
+    auto env_text = capture(std::format("cmd /c \"{}\"", script.string()));
+    std::filesystem::remove(script);
+    if (env_text.empty())
+        return std::nullopt;
+    return parse_environment_block(env_text);
+}
+
 } // namespace detail
+
+export struct MsvcEnvironment {
+    std::filesystem::path tool_root;
+    std::filesystem::path bin_dir;
+    std::filesystem::path cl;
+    std::filesystem::path asan_runtime;
+    std::map<std::string, std::string> variables;
+};
 
 // Install a system tool (e.g. msvc) — detect and verify, no download
 bool install_system_tool(registry::ToolInfo const& info) {
@@ -553,6 +618,38 @@ std::optional<std::filesystem::path> which(
 
 std::optional<std::filesystem::path> msvc_path() {
     return detail::detect_msvc_path();
+}
+
+std::filesystem::path msvc_bin_path(std::filesystem::path const& root) {
+    return detail::msvc_bin_path(root);
+}
+
+std::filesystem::path msvc_asan_runtime_path(std::filesystem::path const& root) {
+    return detail::msvc_asan_runtime_path(root);
+}
+
+std::optional<MsvcEnvironment> msvc_environment() {
+    auto root = detail::detect_msvc_path();
+    if (!root)
+        return std::nullopt;
+
+    auto bin_dir = detail::msvc_bin_path(*root);
+    auto cl = bin_dir / "cl.exe";
+    if (!std::filesystem::exists(cl))
+        return std::nullopt;
+
+    auto variables = detail::capture_msvc_environment(*root);
+    if (!variables)
+        return std::nullopt;
+
+    MsvcEnvironment env{
+        .tool_root = *root,
+        .bin_dir = bin_dir,
+        .cl = cl,
+        .asan_runtime = detail::msvc_asan_runtime_path(*root),
+        .variables = std::move(*variables),
+    };
+    return env;
 }
 
 std::optional<std::string> latest_version(std::string_view tool) {

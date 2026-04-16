@@ -77,6 +77,23 @@ cmake --build build
 
 Requirements: Visual Studio 2022 17.5+, CMake 3.30+, Ninja.
 
+### Windows developer environment
+
+When `msvc` is selected as the default toolchain on Windows, `intron env` now prints a full developer environment instead of just `CC` and `CXX`:
+
+```powershell
+intron default msvc 2022
+intron env
+```
+
+The output includes:
+
+- `$env:PATH` with the MSVC `Hostx64/x64` bin directory
+- `$env:CC` / `$env:CXX` pointing to `cl.exe`
+- `$env:INCLUDE`, `$env:LIB`, and `$env:LIBPATH` from `vcvars64.bat`
+
+This is intended to make direct execution of MSVC-built tools and Windows ASan binaries work from a regular PowerShell session, not just from a pre-opened Visual Studio developer shell.
+
 ## Quick Start
 
 ```sh
