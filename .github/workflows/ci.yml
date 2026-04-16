@@ -90,7 +90,15 @@ jobs:
           exon test
 
       - name: Verify
-        run: .exon/debug/intron help
+        shell: bash
+        run: |
+          binary="$(
+            find . -maxdepth 4 -type f \( -name intron -o -name 'intron.exe' \) \
+              | grep -E '/(\.exon|build)/' \
+              | head -n 1
+          )"
+          test -n "$binary"
+          "$binary" help
 
   bootstrap-windows:
     runs-on: windows-2022
@@ -108,7 +116,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: misut/cppx
-          ref: v0.3.1
+          ref: v1.0.3
           path: cppx
 
       - name: Setup MSVC
@@ -134,3 +142,16 @@ jobs:
 
       - name: Verify
         run: .\build\intron.exe help
+
+      - name: Verify Windows env output
+        shell: pwsh
+        run: |
+          .\build\intron.exe default msvc 2022
+          $envOutput = & .\build\intron.exe env
+          $envOutput | Out-Host
+
+          foreach ($needle in @('$env:PATH =', '$env:CC =', '$env:CXX =', '$env:INCLUDE =', '$env:LIB =', '$env:LIBPATH =', 'Hostx64\x64')) {
+            if (-not ($envOutput | Select-String -SimpleMatch $needle)) {
+              throw "missing expected intron env output: $needle"
+            }
+          }

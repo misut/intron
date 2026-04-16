@@ -35,6 +35,10 @@ target_sources(cppx-modules
     ${CPPX_DIR}/src/cppx.cppm
     ${CPPX_DIR}/src/cppx.env.cppm
     ${CPPX_DIR}/src/cppx.env.system.cppm
+    ${CPPX_DIR}/src/cppx.http.cppm
+    ${CPPX_DIR}/src/cppx.http.client.cppm
+    ${CPPX_DIR}/src/cppx.http.server.cppm
+    ${CPPX_DIR}/src/cppx.http.system.cppm
     ${CPPX_DIR}/src/cppx.platform.cppm
     ${CPPX_DIR}/src/cppx.reflect.cppm
 )
@@ -48,6 +52,7 @@ target_sources(intron
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${INTRON_SOURCE_DIR} FILES
     ${INTRON_SOURCE_DIR}/src/config.cppm
     ${INTRON_SOURCE_DIR}/src/installer.cppm
+    ${INTRON_SOURCE_DIR}/src/net.cppm
     ${INTRON_SOURCE_DIR}/src/registry.cppm
 )
 target_compile_definitions(intron PRIVATE EXON_PKG_VERSION="${INTRON_VERSION}")

@@ -1,6 +1,7 @@
 export module net;
 import std;
 import cppx.http;
+import cppx.http.client;
 import cppx.http.system;
 
 export namespace net {
@@ -33,10 +34,14 @@ auto download_file(std::string_view url, std::filesystem::path const& path,
                    cppx::http::headers extra = {})
     -> std::expected<void, std::string>
 {
-    auto resp = cppx::http::system::download(url, path, std::move(extra));
+    auto client = cppx::http::client<
+        cppx::http::system::stream, cppx::http::system::tls>{};
+    auto resp = client.download_to(url, path, std::move(extra));
     if (!resp)
         return std::unexpected(std::format(
             "download failed: {}", cppx::http::to_string(resp.error())));
+    if (!resp->stat.ok())
+        return std::unexpected(std::format("HTTP {}", resp->stat.code));
     return {};
 }
 

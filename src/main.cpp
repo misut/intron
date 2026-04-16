@@ -431,11 +431,30 @@ int cmd_env() {
         return 1;
     }
 
-    // Collect bin directories for PATH (wasi-sdk and system tools are excluded)
+    auto print_env = [](std::string_view key, std::string_view value, bool append_existing = false) {
+#ifdef _WIN32
+        if (append_existing)
+            std::println("$env:{} = \"{};${{env:{}}}\";", key, value, key);
+        else
+            std::println("$env:{} = \"{}\";", key, value);
+#else
+        if (append_existing)
+            std::println("export {}=\"{}:{}\";", key, value, std::format("${}", key));
+        else
+            std::println("export {}=\"{}\";", key, value);
+#endif
+    };
+
+    std::optional<installer::MsvcEnvironment> msvc_env;
+    if (defaults.contains("msvc"))
+        msvc_env = installer::msvc_environment();
+
+    // Collect bin directories for PATH (wasi-sdk excluded; MSVC handled separately)
     std::vector<std::string> paths;
     for (auto const& [tool, version] : defaults) {
         if (tool == "wasi-sdk") continue;
-        if (registry::is_system_tool(tool)) continue;
+        if (registry::is_system_tool(tool) && tool != "msvc") continue;
+        if (tool == "msvc") continue;
         auto base = installer::toolchain_path(tool, version);
         if (!std::filesystem::exists(base)) continue;
         if (tool == "ninja" || tool == "wasmtime") {
@@ -444,6 +463,8 @@ int cmd_env() {
             paths.push_back((base / "bin").string());
         }
     }
+    if (msvc_env)
+        paths.push_back(msvc_env->bin_dir.string());
 
     // PATH
 #ifdef _WIN32
@@ -457,15 +478,16 @@ int cmd_env() {
             if (!path_val.empty()) path_val += path_sep;
             path_val += p;
         }
-#ifdef _WIN32
-        // PowerShell syntax
-        std::println("$env:PATH = \"{}{}{}\";", path_val, path_sep, "$env:PATH");
-#else
-        std::println("export PATH=\"{}{}$PATH\";", path_val, path_sep);
-#endif
+        if (msvc_env) {
+            auto it = msvc_env->variables.find("Path");
+            if (it != msvc_env->variables.end() && !it->second.empty())
+                path_val += std::format("{}{}", path_sep, it->second);
+        }
+        print_env("PATH", path_val, true);
     }
 
     // CC/CXX
+    bool printed_compiler = false;
     if (defaults.contains("llvm")) {
         // LLVM takes priority over MSVC for CC/CXX
         auto llvm_bin = installer::toolchain_path("llvm", defaults.at("llvm")) / "bin";
@@ -473,26 +495,36 @@ int cmd_env() {
         if (std::filesystem::exists(llvm_bin / "clang-cl.exe")) {
             std::println("$env:CC = \"{}\";", (llvm_bin / "clang-cl.exe").string());
             std::println("$env:CXX = \"{}\";", (llvm_bin / "clang-cl.exe").string());
+            printed_compiler = true;
         }
 #else
         if (std::filesystem::exists(llvm_bin / "clang")) {
             std::println("export CC=\"{}\";", (llvm_bin / "clang").string());
             std::println("export CXX=\"{}\";", (llvm_bin / "clang++").string());
-        }
-#endif
-    } else if (defaults.contains("msvc")) {
-#ifdef _WIN32
-        // Detect MSVC via vswhere and set CC/CXX to cl.exe
-        auto msvc = installer::msvc_path();
-        if (msvc) {
-            auto cl = *msvc / "bin" / "Hostx64" / "x64" / "cl.exe";
-            if (std::filesystem::exists(cl)) {
-                std::println("$env:CC = \"{}\";", cl.string());
-                std::println("$env:CXX = \"{}\";", cl.string());
-            }
+            printed_compiler = true;
         }
 #endif
     }
+
+    if (!printed_compiler && defaults.contains("msvc")) {
+#ifdef _WIN32
+        if (msvc_env) {
+            std::println("$env:CC = \"{}\";", msvc_env->cl.string());
+            std::println("$env:CXX = \"{}\";", msvc_env->cl.string());
+            printed_compiler = true;
+        }
+#endif
+    }
+
+#ifdef _WIN32
+    if (msvc_env) {
+        for (auto const& key : {"INCLUDE", "LIB", "LIBPATH"}) {
+            auto it = msvc_env->variables.find(key);
+            if (it != msvc_env->variables.end() && !it->second.empty())
+                print_env(key, it->second);
+        }
+    }
+#endif
 
     // WASI_SDK_PATH (when wasi-sdk is set as default)
     if (defaults.contains("wasi-sdk")) {

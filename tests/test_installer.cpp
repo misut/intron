@@ -61,6 +61,35 @@ void test_github_api_headers() {
           "github api accept header");
 }
 
+void test_msvc_helper_paths() {
+    auto root = std::filesystem::path{"C:/VS/VC/Tools/MSVC/14.40.33807"};
+    auto bin = installer::msvc_bin_path(root);
+    auto asan = installer::msvc_asan_runtime_path(root);
+
+    check(bin.generic_string().ends_with("VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64"),
+          "msvc bin path uses Hostx64/x64");
+    check(asan.generic_string().ends_with(
+              "VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64/clang_rt.asan_dynamic-x86_64.dll"),
+          "msvc asan runtime path points at clang_rt dll");
+}
+
+void test_msvc_environment_smoke() {
+#ifdef _WIN32
+    auto root = installer::msvc_path();
+    if (!root.has_value()) {
+        std::println("SKIP: msvc installation not available");
+        return;
+    }
+    auto env = installer::msvc_environment();
+    check(env.has_value(), "msvc environment is available when msvc is installed");
+    if (!env.has_value()) return;
+    check(std::filesystem::exists(env->cl), "msvc environment exposes cl.exe");
+    check(env->variables.contains("INCLUDE"), "msvc environment includes INCLUDE");
+    check(env->variables.contains("LIB"), "msvc environment includes LIB");
+    check(env->variables.contains("LIBPATH"), "msvc environment includes LIBPATH");
+#endif
+}
+
 int main() {
     test_toolchain_path();
     test_intron_home();
@@ -68,6 +97,8 @@ int main() {
     test_list_installed_empty_version();
     test_latest_version_from_release_json();
     test_github_api_headers();
+    test_msvc_helper_paths();
+    test_msvc_environment_smoke();
 
     if (failures > 0) {
         std::println(std::cerr, "{} test(s) failed", failures);
