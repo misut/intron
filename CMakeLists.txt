@@ -53,7 +53,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.18.6\""
+    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.18.7\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
