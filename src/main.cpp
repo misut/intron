@@ -371,7 +371,7 @@ int cmd_self_update(std::string_view self_path) {
 
     auto dl = net::download_file(url, archive, net::user_agent_headers(user_agent()));
     if (!dl) {
-        std::println(std::cerr, "error: download failed");
+        std::println(std::cerr, "error: {}", dl.error());
         std::filesystem::remove_all(tmp);
         return 1;
     }
