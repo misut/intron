@@ -90,7 +90,11 @@ jobs:
           exon test
 
       - name: Verify
-        run: ./.exon/debug/intron help
+        shell: bash
+        run: |
+          binary="$(find .exon/debug -maxdepth 1 -type f -name 'intron*' | head -n 1)"
+          test -n "$binary"
+          "$binary" help
 
   bootstrap-windows:
     runs-on: windows-2022
