@@ -51,11 +51,14 @@ void test_msvc_helper_paths() {
 
 void test_msvc_environment_smoke() {
 #ifdef _WIN32
-    auto env = installer::msvc_environment();
-    if (!env.has_value()) {
-        std::println("SKIP: msvc environment not available");
+    auto root = installer::msvc_path();
+    if (!root.has_value()) {
+        std::println("SKIP: msvc installation not available");
         return;
     }
+    auto env = installer::msvc_environment();
+    check(env.has_value(), "msvc environment is available when msvc is installed");
+    if (!env.has_value()) return;
     check(std::filesystem::exists(env->cl), "msvc environment exposes cl.exe");
     check(env->variables.contains("INCLUDE"), "msvc environment includes INCLUDE");
     check(env->variables.contains("LIB"), "msvc environment includes LIB");

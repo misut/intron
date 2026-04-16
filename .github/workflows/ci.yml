@@ -90,7 +90,7 @@ jobs:
           exon test
 
       - name: Verify
-        run: .exon/debug/intron help
+        run: ./.exon/debug/intron help
 
   bootstrap-windows:
     runs-on: windows-2022

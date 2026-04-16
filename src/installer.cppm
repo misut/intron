@@ -323,6 +323,47 @@ bool verify_installed_binary(std::filesystem::path const& dest, registry::ToolIn
     return true;
 }
 
+std::optional<std::filesystem::path> find_latest_msvc_toolset(
+    std::filesystem::path const& installs_root) {
+    if (!std::filesystem::exists(installs_root))
+        return std::nullopt;
+
+    std::filesystem::path best_path;
+    std::string best_version;
+
+    for (auto const& year_entry : std::filesystem::directory_iterator{installs_root}) {
+        if (!year_entry.is_directory())
+            continue;
+        for (auto const& edition_entry : std::filesystem::directory_iterator{year_entry.path()}) {
+            if (!edition_entry.is_directory())
+                continue;
+
+            auto vc_tools = edition_entry.path() / "VC" / "Tools" / "MSVC";
+            if (!std::filesystem::exists(vc_tools))
+                continue;
+
+            for (auto const& version_entry : std::filesystem::directory_iterator{vc_tools}) {
+                if (!version_entry.is_directory())
+                    continue;
+
+                auto version = version_entry.path().filename().string();
+                auto cl = version_entry.path() / "bin" / "Hostx64" / "x64" / "cl.exe";
+                if (!std::filesystem::exists(cl))
+                    continue;
+
+                if (version > best_version) {
+                    best_version = version;
+                    best_path = version_entry.path();
+                }
+            }
+        }
+    }
+
+    if (best_version.empty())
+        return std::nullopt;
+    return best_path;
+}
+
 // Detect MSVC installation via vswhere (Windows only)
 std::optional<std::filesystem::path> detect_msvc_path() {
     if constexpr (!is_windows) return std::nullopt;
@@ -347,21 +388,39 @@ std::optional<std::filesystem::path> detect_msvc_path() {
     auto install_path = capture(
         std::format("{} -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath",
             vswhere_cmd));
-    if (install_path.empty()) return std::nullopt;
-
-    // Find the latest MSVC toolset version
-    auto vc_tools = std::filesystem::path{install_path} / "VC" / "Tools" / "MSVC";
-    if (!std::filesystem::exists(vc_tools)) return std::nullopt;
-
-    std::string latest_ver;
-    for (auto const& entry : std::filesystem::directory_iterator{vc_tools}) {
-        if (!entry.is_directory()) continue;
-        auto ver = entry.path().filename().string();
-        if (ver > latest_ver) latest_ver = ver;
+    if (!install_path.empty()) {
+        // Find the latest MSVC toolset version
+        auto vc_tools = std::filesystem::path{install_path} / "VC" / "Tools" / "MSVC";
+        if (std::filesystem::exists(vc_tools)) {
+            std::string latest_ver;
+            for (auto const& entry : std::filesystem::directory_iterator{vc_tools}) {
+                if (!entry.is_directory()) continue;
+                auto ver = entry.path().filename().string();
+                if (ver > latest_ver) latest_ver = ver;
+            }
+            if (!latest_ver.empty())
+                return vc_tools / latest_ver;
+        }
     }
-    if (latest_ver.empty()) return std::nullopt;
 
-    return vc_tools / latest_ver;
+    std::vector<std::filesystem::path> install_roots;
+    for (auto var : {"ProgramFiles", "ProgramFiles(x86)"}) {
+        auto root = std::getenv(var);
+        if (!root || !*root)
+            continue;
+        install_roots.push_back(std::filesystem::path{root} / "Microsoft Visual Studio");
+    }
+    install_roots.push_back("C:/Program Files/Microsoft Visual Studio");
+    install_roots.push_back("C:/Program Files (x86)/Microsoft Visual Studio");
+
+    std::ranges::sort(install_roots);
+    install_roots.erase(std::unique(install_roots.begin(), install_roots.end()), install_roots.end());
+
+    for (auto const& installs_root : install_roots)
+        if (auto detected = find_latest_msvc_toolset(installs_root))
+            return detected;
+
+    return std::nullopt;
 }
 
 std::filesystem::path msvc_bin_path(std::filesystem::path const& root) {
@@ -404,21 +463,55 @@ std::optional<std::map<std::string, std::string>> capture_msvc_environment(
     if (!std::filesystem::exists(vcvars))
         return std::nullopt;
 
-    auto script = std::filesystem::temp_directory_path() / "intron_msvc_env.cmd";
-    {
-        auto out = std::ofstream{script};
-        if (!out)
-            return std::nullopt;
-        out << "@echo off\n";
-        out << std::format("call \"{}\" >nul\n", vcvars.string());
-        out << "set\n";
-    }
+    auto tmp = std::filesystem::temp_directory_path() / "intron_msvc_env.txt";
+    auto cmd = std::format(
+        "call \"{}\" >nul && set > \"{}\" 2>nul",
+        vcvars.string(),
+        tmp.string());
+    if (std::system(cmd.c_str()) != 0)
+        return std::nullopt;
 
-    auto env_text = capture(std::format("cmd /c \"{}\"", script.string()));
-    std::filesystem::remove(script);
+    std::string env_text;
+    {
+        auto in = std::ifstream{tmp};
+        env_text.assign(
+            std::istreambuf_iterator<char>{in},
+            std::istreambuf_iterator<char>{});
+    }
+    std::filesystem::remove(tmp);
     if (env_text.empty())
         return std::nullopt;
     return parse_environment_block(env_text);
+}
+
+std::optional<std::map<std::string, std::string>> current_msvc_environment(
+    std::filesystem::path const& root) {
+    if constexpr (!is_windows)
+        return std::nullopt;
+
+    auto include = std::getenv("INCLUDE");
+    auto lib = std::getenv("LIB");
+    auto libpath = std::getenv("LIBPATH");
+    if (!(include && *include) || !(lib && *lib) || !(libpath && *libpath))
+        return std::nullopt;
+
+    std::map<std::string, std::string> env;
+    env["INCLUDE"] = include;
+    env["LIB"] = lib;
+    env["LIBPATH"] = libpath;
+    if (auto path = std::getenv("Path"); path && *path)
+        env["Path"] = path;
+    else if (auto path = std::getenv("PATH"); path && *path)
+        env["Path"] = path;
+
+    auto vctools = std::getenv("VCToolsInstallDir");
+    if (vctools && *vctools) {
+        auto normalized = std::filesystem::path{vctools}.lexically_normal();
+        if (normalized != root.lexically_normal())
+            return std::nullopt;
+    }
+
+    return env;
 }
 
 } // namespace detail
@@ -639,6 +732,8 @@ std::optional<MsvcEnvironment> msvc_environment() {
         return std::nullopt;
 
     auto variables = detail::capture_msvc_environment(*root);
+    if (!variables)
+        variables = detail::current_msvc_environment(*root);
     if (!variables)
         return std::nullopt;
 

@@ -486,6 +486,7 @@ int cmd_env() {
     }
 
     // CC/CXX
+    bool printed_compiler = false;
     if (defaults.contains("llvm")) {
         // LLVM takes priority over MSVC for CC/CXX
         auto llvm_bin = installer::toolchain_path("llvm", defaults.at("llvm")) / "bin";
@@ -493,18 +494,23 @@ int cmd_env() {
         if (std::filesystem::exists(llvm_bin / "clang-cl.exe")) {
             std::println("$env:CC = \"{}\";", (llvm_bin / "clang-cl.exe").string());
             std::println("$env:CXX = \"{}\";", (llvm_bin / "clang-cl.exe").string());
+            printed_compiler = true;
         }
 #else
         if (std::filesystem::exists(llvm_bin / "clang")) {
             std::println("export CC=\"{}\";", (llvm_bin / "clang").string());
             std::println("export CXX=\"{}\";", (llvm_bin / "clang++").string());
+            printed_compiler = true;
         }
 #endif
-    } else if (defaults.contains("msvc")) {
+    }
+
+    if (!printed_compiler && defaults.contains("msvc")) {
 #ifdef _WIN32
         if (msvc_env) {
             std::println("$env:CC = \"{}\";", msvc_env->cl.string());
             std::println("$env:CXX = \"{}\";", msvc_env->cl.string());
+            printed_compiler = true;
         }
 #endif
     }
