@@ -172,7 +172,9 @@ bool verify_checksum(std::filesystem::path const& archive,
     auto dl = net::download_file(
         checksum_url, checksum_file, net::user_agent_headers(user_agent()));
     if (!dl) {
-        std::println("warning: could not download checksum file, skipping verification");
+        std::println(
+            "warning: could not download checksum file ({}), skipping verification",
+            dl.error());
         return true;
     }
 
@@ -590,7 +592,7 @@ bool install(registry::ToolInfo const& info) {
         auto dl = net::download_file(
             info.url, archive_path, net::user_agent_headers(detail::user_agent()));
         if (!dl) {
-            std::println(std::cerr, "error: download failed");
+            std::println(std::cerr, "error: {}", dl.error());
             std::filesystem::remove(archive_path);
             cleanup();
             return false;
