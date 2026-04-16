@@ -32,6 +32,8 @@ add_subdirectory(${TOMLCPP_DIR} tomlcpp)
 add_library(cppx-modules)
 target_sources(cppx-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CPPX_DIR}/src FILES
+    ${CPPX_DIR}/src/cppx.async.cppm
+    ${CPPX_DIR}/src/cppx.async.system.cppm
     ${CPPX_DIR}/src/cppx.cppm
     ${CPPX_DIR}/src/cppx.env.cppm
     ${CPPX_DIR}/src/cppx.env.system.cppm

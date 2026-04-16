@@ -92,11 +92,20 @@ jobs:
       - name: Verify
         shell: bash
         run: |
-          binary="$(
-            find . -maxdepth 4 -type f \( -name intron -o -name 'intron.exe' \) \
-              | grep -E '/(\.exon|build)/' \
-              | head -n 1
-          )"
+          binary=""
+          for candidate in \
+            ./.exon/debug/intron \
+            ./.exon/release/intron \
+            ./build/intron \
+            ./.exon/debug/intron.exe \
+            ./.exon/release/intron.exe \
+            ./build/intron.exe
+          do
+            if [ -f "$candidate" ]; then
+              binary="$candidate"
+              break
+            fi
+          done
           test -n "$binary"
           "$binary" help
 
