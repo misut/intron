@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v0.3.1
+    GIT_TAG v1.0.3
     GIT_SHALLOW ON
 )
 FetchContent_Declare(tomlcpp
@@ -32,6 +32,7 @@ target_sources(intron-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/config.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/installer.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
 )
 target_link_libraries(intron-modules PUBLIC
@@ -48,6 +49,7 @@ target_link_libraries(intron PRIVATE intron-modules)
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/config.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/installer.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
