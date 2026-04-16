@@ -34,15 +34,39 @@ auto download_file(std::string_view url, std::filesystem::path const& path,
                    cppx::http::headers extra = {})
     -> std::expected<void, std::string>
 {
-    auto client = cppx::http::client<
-        cppx::http::system::stream, cppx::http::system::tls>{};
-    auto resp = client.download_to(url, path, std::move(extra));
-    if (!resp)
-        return std::unexpected(std::format(
-            "download failed: {}", cppx::http::to_string(resp.error())));
-    if (!resp->stat.ok())
-        return std::unexpected(std::format("HTTP {}", resp->stat.code));
-    return {};
+    auto last_error = std::string{};
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        auto client = cppx::http::client<
+            cppx::http::system::stream, cppx::http::system::tls>{};
+        auto resp = client.download_to(url, path, extra);
+        if (resp) {
+            if (!resp->stat.ok())
+                return std::unexpected(std::format("HTTP {}", resp->stat.code));
+            return {};
+        }
+
+        auto err = resp.error();
+        last_error = std::format(
+            "download failed: {}", cppx::http::to_string(err));
+
+        // GitHub-hosted archives can fail transiently on Windows runners.
+        auto transient =
+            err == cppx::http::http_error::response_parse_failed ||
+            err == cppx::http::http_error::connection_failed ||
+            err == cppx::http::http_error::tls_failed ||
+            err == cppx::http::http_error::timeout;
+        if (!transient || attempt == 3)
+            break;
+
+        auto partial = path;
+        partial += ".part";
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(partial, ec);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250 * attempt));
+    }
+
+    return std::unexpected(last_error);
 }
 
 auto latest_version_from_release_json(std::string_view json)
