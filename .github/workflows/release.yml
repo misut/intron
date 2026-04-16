@@ -149,7 +149,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        repo: [exon, txn, phenotype]
+        repo: [exon, txn, phenotype, jsoncpp, tomlcpp]
     steps:
       - name: Dispatch bump to ${{ matrix.repo }}
         run: |
