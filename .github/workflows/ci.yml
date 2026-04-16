@@ -7,7 +7,6 @@ on:
       - "*.md"
       - "LICENSE"
       - ".gitignore"
-      - "mise.toml"
       - ".claude/**"
   pull_request:
     branches: [main]
@@ -15,7 +14,6 @@ on:
       - "*.md"
       - "LICENSE"
       - ".gitignore"
-      - "mise.toml"
       - ".claude/**"
 
 jobs:
@@ -33,6 +31,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve tool versions
+        id: tool-versions
+        shell: bash
+        run: |
+          sed -n 's/^"vfox:misut\/mise-intron"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/intron=\1/p' mise.toml >> "$GITHUB_OUTPUT"
+          sed -n 's/^"vfox:misut\/mise-exon"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/exon=\1/p' mise.toml >> "$GITHUB_OUTPUT"
 
       - name: Cache toolchains
         uses: actions/cache@v4
@@ -69,7 +74,7 @@ jobs:
 
       - name: Install exon
         run: |
-          gh release download v0.22.2 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+          gh release download v${{ steps.tool-versions.outputs.exon }} -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
           tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
