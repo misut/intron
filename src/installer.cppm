@@ -516,7 +516,7 @@ std::optional<std::map<std::string, std::string>> current_msvc_environment(
 
 } // namespace detail
 
-export struct MsvcEnvironment {
+struct MsvcEnvironment {
     std::filesystem::path tool_root;
     std::filesystem::path bin_dir;
     std::filesystem::path cl;
