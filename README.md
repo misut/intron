@@ -112,6 +112,8 @@ The output includes:
 
 This is intended to make direct execution of MSVC-built tools and Windows ASan binaries work from a regular PowerShell session, not just from a pre-opened Visual Studio developer shell.
 
+`intron exec -- <command> [args...]` uses the same resolved MSVC-related variables and injects them directly into the child process environment, so commands such as `cl.exe` and `exon test` can run without manually `eval`-ing the shell output first.
+
 ## Quick Start
 
 ```sh
@@ -123,6 +125,8 @@ intron default cmake 4.3.1
 intron default ninja 1.13.2
 eval "$(intron env)"
 clang++ --version
+intron exec -- cmake --version
+intron exec -- exon test
 ```
 
 ## Commands
@@ -136,6 +140,7 @@ clang++ --version
 | `intron default <tool> <version>` | Set global default version |
 | `intron use [tool] [version]` | Set project toolchain in `.intron.toml` |
 | `intron env` | Print environment variables (`eval "$(intron env)"`) |
+| `intron exec -- <command> [args...]` | Run a command with the resolved intron environment |
 | `intron update` | Check for newer versions |
 | `intron upgrade [tool]` | Upgrade tools to latest |
 | `intron self-update` | Update intron itself |

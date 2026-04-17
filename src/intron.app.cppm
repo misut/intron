@@ -67,6 +67,7 @@ auto command_from_string(std::string_view command) -> std::optional<intron::Comm
     if (command == "update") return intron::CommandKind::Update;
     if (command == "upgrade") return intron::CommandKind::Upgrade;
     if (command == "env") return intron::CommandKind::Env;
+    if (command == "exec") return intron::CommandKind::Exec;
     if (command == "self-update") return intron::CommandKind::SelfUpdate;
     if (command == "help" || command == "--help" || command == "-h") {
         return intron::CommandKind::Help;
@@ -391,14 +392,44 @@ auto cmd_upgrade(intron::CommandRequest const& request) -> intron::CommandResult
     return result;
 }
 
-auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
-    auto result = intron::CommandResult{};
+auto exec_usage_result() -> intron::CommandResult {
+    auto result = intron::CommandResult{
+        .exit_code = 1,
+    };
+    result.add_stderr("Usage: intron exec -- <command> [args...]");
+    return result;
+}
+
+auto snapshot_inherited_environment(intron::RuntimePorts const& ports)
+    -> std::map<std::string, std::string>
+{
+    auto inherited = std::map<std::string, std::string>{};
+    if (!ports.environment.get) {
+        return inherited;
+    }
+    for (auto const* key : {"PATH"
+#ifdef _WIN32
+        , "Path"
+#endif
+    }) {
+        if (auto value = ports.environment.get(key)) {
+            inherited[std::string{key}] = *value;
+        }
+    }
+    return inherited;
+}
+
+auto resolve_env_plan(intron::RuntimePorts const& ports)
+    -> std::expected<intron::EnvPlan, intron::CommandResult>
+{
     auto defaults = config::load_effective_defaults();
     if (defaults.empty()) {
-        result.exit_code = 1;
+        auto result = intron::CommandResult{
+            .exit_code = 1,
+        };
         result.add_stderr("error: no default versions set");
         result.add_stderr("hint: run 'intron default <tool> <version>'");
-        return result;
+        return std::unexpected(std::move(result));
     }
 
     auto intron_home = resolved_intron_home(ports);
@@ -439,10 +470,8 @@ auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
 
 #ifdef _WIN32
     constexpr auto path_sep = ';';
-    constexpr auto is_windows = true;
 #else
     constexpr auto path_sep = ':';
-    constexpr auto is_windows = false;
 #endif
 
     auto path_value = std::optional<std::string>{};
@@ -518,9 +547,62 @@ auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
         extra_vars,
         wasi_sdk_path);
 
-    for (auto const& line : intron::render_env_lines(plan, is_windows)) {
+    return plan;
+}
+
+auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
+    auto resolved = resolve_env_plan(ports);
+    if (!resolved) {
+        return resolved.error();
+    }
+
+#ifdef _WIN32
+    constexpr auto is_windows = true;
+#else
+    constexpr auto is_windows = false;
+#endif
+
+    auto result = intron::CommandResult{};
+    for (auto const& line : intron::render_env_lines(*resolved, is_windows)) {
         result.add_stdout(line);
     }
+    return result;
+}
+
+auto cmd_exec(intron::CommandRequest const& request,
+              intron::RuntimePorts const& ports) -> intron::CommandResult
+{
+    auto child_argv = intron::parse_exec_args(request.args);
+    if (!child_argv) {
+        return exec_usage_result();
+    }
+
+    auto resolved = resolve_env_plan(ports);
+    if (!resolved) {
+        return resolved.error();
+    }
+
+    auto result = intron::CommandResult{};
+    if (!ports.process.run) {
+        result.exit_code = 1;
+        result.add_stderr("error: process runner is not configured");
+        return result;
+    }
+
+    auto request_env = intron::materialize_env_overrides(
+        *resolved,
+        snapshot_inherited_environment(ports));
+    auto run_result = ports.process.run({
+        .argv = *child_argv,
+        .env_overrides = std::move(request_env),
+    });
+    if (!run_result) {
+        result.exit_code = 1;
+        result.add_stderr(std::format("error: {}", run_result.error()));
+        return result;
+    }
+
+    result.exit_code = *run_result;
     return result;
 }
 
@@ -579,6 +661,8 @@ auto run_command(intron::CommandRequest const& request,
         return cmd_upgrade(request);
     case intron::CommandKind::Env:
         return cmd_env(ports);
+    case intron::CommandKind::Exec:
+        return cmd_exec(request, ports);
     case intron::CommandKind::Help:
         return usage_result(0);
     case intron::CommandKind::SelfUpdate:

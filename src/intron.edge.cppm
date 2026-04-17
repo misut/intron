@@ -1,7 +1,302 @@
+module;
+#if defined(_WIN32)
+#define NOMINMAX
+#include <process.h>
+#include <windows.h>
+#else
+#include <spawn.h>
+#include <sys/wait.h>
+#include <cerrno>
+
+extern char** environ;
+#endif
+
 export module intron.edge;
 import std;
+import cppx.env;
 import cppx.env.system;
 import intron.domain;
+
+namespace {
+
+using EnvMap = std::map<std::string, std::string>;
+
+auto env_key_equals(std::string_view lhs, std::string_view rhs) -> bool {
+#ifdef _WIN32
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+            std::tolower(static_cast<unsigned char>(rhs[i]))) {
+            return false;
+        }
+    }
+    return true;
+#else
+    return lhs == rhs;
+#endif
+}
+
+auto find_env_entry(EnvMap& env, std::string_view key) -> EnvMap::iterator {
+    return std::ranges::find_if(env, [&](auto const& entry) {
+        return env_key_equals(entry.first, key);
+    });
+}
+
+auto find_env_entry(EnvMap const& env, std::string_view key) -> EnvMap::const_iterator {
+    return std::ranges::find_if(env, [&](auto const& entry) {
+        return env_key_equals(entry.first, key);
+    });
+}
+
+auto current_environment() -> EnvMap {
+    auto env = EnvMap{};
+#ifdef _WIN32
+    auto* block = GetEnvironmentStringsW();
+    if (!block) {
+        return env;
+    }
+    auto* cursor = block;
+    while (*cursor != L'\0') {
+        auto entry_view = std::wstring_view{cursor};
+        auto split = entry_view.find(L'=');
+        if (split == 0) {
+            split = entry_view.find(L'=', 1);
+        }
+        if (split != std::wstring_view::npos) {
+            auto narrow = [](std::wstring_view value) -> std::string {
+                if (value.empty()) {
+                    return {};
+                }
+                auto size = WideCharToMultiByte(
+                    CP_ACP,
+                    0,
+                    value.data(),
+                    static_cast<int>(value.size()),
+                    nullptr,
+                    0,
+                    nullptr,
+                    nullptr);
+                if (size <= 0) {
+                    throw std::runtime_error("failed to convert wide environment string");
+                }
+                auto out = std::string(static_cast<std::size_t>(size), '\0');
+                WideCharToMultiByte(
+                    CP_ACP,
+                    0,
+                    value.data(),
+                    static_cast<int>(value.size()),
+                    out.data(),
+                    size,
+                    nullptr,
+                    nullptr);
+                return out;
+            };
+            env.emplace(
+                narrow(entry_view.substr(0, split)),
+                narrow(entry_view.substr(split + 1)));
+        }
+        cursor += entry_view.size() + 1;
+    }
+    FreeEnvironmentStringsW(block);
+#else
+    for (auto** entry = environ; entry && *entry; ++entry) {
+        auto text = std::string_view{*entry};
+        auto split = text.find('=');
+        if (split == std::string_view::npos) {
+            continue;
+        }
+        env.emplace(
+            std::string{text.substr(0, split)},
+            std::string{text.substr(split + 1)});
+    }
+#endif
+    return env;
+}
+
+auto apply_overrides(EnvMap env, std::map<std::string, std::string> const& overrides) -> EnvMap {
+    for (auto const& [key, value] : overrides) {
+        if (auto it = find_env_entry(env, key); it != env.end()) {
+            it->second = value;
+        } else {
+            env.emplace(key, value);
+        }
+    }
+    return env;
+}
+
+struct MergedEnvSource {
+    EnvMap const& env;
+
+    auto get(std::string_view key) const -> std::optional<std::string> {
+        if (auto it = find_env_entry(env, key); it != env.end() && !it->second.empty()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+};
+
+struct FilesystemSource {
+    auto is_regular_file(std::filesystem::path const& path) const -> bool {
+        std::error_code ec;
+        return std::filesystem::is_regular_file(path, ec);
+    }
+};
+
+auto resolve_executable(
+    std::string_view argv0,
+    EnvMap const& env) -> std::expected<std::filesystem::path, std::string>
+{
+    if (argv0.empty()) {
+        return std::unexpected("missing executable name");
+    }
+
+    auto candidate = std::filesystem::path{argv0};
+    if (candidate.has_parent_path() || candidate.is_absolute()) {
+        return candidate;
+    }
+
+    auto found = cppx::env::find_in_path(MergedEnvSource{env}, FilesystemSource{}, argv0);
+    if (!found) {
+        return std::unexpected(std::format("executable not found: {}", argv0));
+    }
+    return *found;
+}
+
+#ifndef _WIN32
+auto normalize_unix_exit_status(int status) -> int {
+    if (status == -1) {
+        return 1;
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return 1;
+}
+#endif
+
+auto run_process(intron::ProcessRunRequest const& request) -> std::expected<int, std::string> {
+    if (request.argv.empty()) {
+        return std::unexpected("missing executable name");
+    }
+    auto env = apply_overrides(current_environment(), request.env_overrides);
+    auto executable = resolve_executable(request.argv.front(), env);
+    if (!executable) {
+        return std::unexpected(executable.error());
+    }
+
+#ifdef _WIN32
+    auto to_wide = [](std::string_view value) -> std::wstring {
+        if (value.empty()) {
+            return {};
+        }
+        auto size = MultiByteToWideChar(
+            CP_ACP,
+            0,
+            value.data(),
+            static_cast<int>(value.size()),
+            nullptr,
+            0);
+        if (size <= 0) {
+            throw std::runtime_error("failed to convert string to UTF-16");
+        }
+        auto out = std::wstring(static_cast<std::size_t>(size), L'\0');
+        MultiByteToWideChar(
+            CP_ACP,
+            0,
+            value.data(),
+            static_cast<int>(value.size()),
+            out.data(),
+            size);
+        return out;
+    };
+
+    auto wide_executable = executable->wstring();
+    auto wide_args = std::vector<std::wstring>{};
+    wide_args.reserve(request.argv.size());
+    for (auto const& arg : request.argv) {
+        wide_args.push_back(to_wide(arg));
+    }
+    auto argv = std::vector<wchar_t*>{};
+    argv.reserve(wide_args.size() + 1);
+    for (auto& arg : wide_args) {
+        argv.push_back(arg.data());
+    }
+    argv.push_back(nullptr);
+
+    auto wide_env = std::vector<std::wstring>{};
+    wide_env.reserve(env.size());
+    for (auto const& [key, value] : env) {
+        wide_env.push_back(to_wide(std::format("{}={}", key, value)));
+    }
+    auto envp = std::vector<wchar_t*>{};
+    envp.reserve(wide_env.size() + 1);
+    for (auto& entry : wide_env) {
+        envp.push_back(entry.data());
+    }
+    envp.push_back(nullptr);
+
+    errno = 0;
+    auto exit_code = _wspawnve(_P_WAIT, wide_executable.c_str(), argv.data(), envp.data());
+    if (exit_code == -1) {
+        return std::unexpected(std::format(
+            "failed to spawn '{}': {}",
+            executable->string(),
+            std::generic_category().message(errno)));
+    }
+    return static_cast<int>(exit_code);
+#else
+    auto argv_storage = request.argv;
+    auto argv = std::vector<char*>{};
+    argv.reserve(argv_storage.size() + 1);
+    for (auto& arg : argv_storage) {
+        argv.push_back(arg.data());
+    }
+    argv.push_back(nullptr);
+
+    auto env_storage = std::vector<std::string>{};
+    env_storage.reserve(env.size());
+    for (auto const& [key, value] : env) {
+        env_storage.push_back(std::format("{}={}", key, value));
+    }
+    auto envp = std::vector<char*>{};
+    envp.reserve(env_storage.size() + 1);
+    for (auto& entry : env_storage) {
+        envp.push_back(entry.data());
+    }
+    envp.push_back(nullptr);
+
+    pid_t pid = 0;
+    auto rc = posix_spawn(
+        &pid,
+        executable->c_str(),
+        nullptr,
+        nullptr,
+        argv.data(),
+        envp.data());
+    if (rc != 0) {
+        return std::unexpected(std::format(
+            "failed to spawn '{}': {}",
+            executable->string(),
+            std::generic_category().message(rc)));
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) == -1) {
+        return std::unexpected(std::format(
+            "failed to wait for '{}': {}",
+            executable->string(),
+            std::generic_category().message(errno)));
+    }
+    return normalize_unix_exit_status(status);
+#endif
+}
+
+} // namespace
 
 export namespace intron::edge {
 
@@ -9,6 +304,11 @@ auto make_runtime_ports() -> intron::RuntimePorts {
     auto ports = intron::RuntimePorts{};
     ports.filesystem.exists = [](std::filesystem::path const& path) {
         return std::filesystem::exists(path);
+    };
+    ports.process.run = [](intron::ProcessRunRequest const& request)
+        -> std::expected<int, std::string>
+    {
+        return run_process(request);
     };
     ports.environment.get = [](std::string_view key) -> std::optional<std::string> {
         auto owned = std::string{key};
