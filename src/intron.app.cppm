@@ -126,10 +126,21 @@ auto cmd_list() -> intron::CommandResult {
     auto defaults = config::load_effective_defaults();
     for (auto const& [tool, version] : installed) {
         auto it = defaults.find(tool);
-        if (it != defaults.end() && it->second == version) {
-            result.add_stdout(std::format("{} {} (default)", tool, version));
+        auto display_version = version;
+        auto default_version = std::optional<std::string>{};
+        if (registry::is_system_tool(tool)) {
+            display_version = registry::normalize_requested_version(tool, version);
+            if (it != defaults.end()) {
+                default_version = registry::normalize_requested_version(tool, it->second);
+            }
+        } else if (it != defaults.end()) {
+            default_version = it->second;
+        }
+
+        if (default_version && *default_version == display_version) {
+            result.add_stdout(std::format("{} {} (default)", tool, display_version));
         } else {
-            result.add_stdout(std::format("{} {}", tool, version));
+            result.add_stdout(std::format("{} {}", tool, display_version));
         }
     }
     return result;
@@ -189,7 +200,7 @@ auto cmd_default(intron::CommandRequest const& request,
     }
 
     auto tool = std::string_view{parsed->positional[0]};
-    auto version = std::string_view{parsed->positional[1]};
+    auto version = registry::normalize_requested_version(tool, parsed->positional[1]);
     if (!registry::is_system_tool(tool)) {
         auto home = resolved_intron_home(ports);
         auto path = installer::toolchain_path(home, tool, version);
@@ -233,14 +244,15 @@ auto cmd_use(intron::CommandRequest const& request,
             return result;
         }
         for (auto const& [tool, version] : defaults) {
-            document.common[tool] = version;
-            result.add_stdout(std::format("set {} {}", tool, version));
+            auto normalized_version = registry::normalize_requested_version(tool, version);
+            document.common[tool] = normalized_version;
+            result.add_stdout(std::format("set {} {}", tool, normalized_version));
         }
     } else {
         auto tool = parsed->positional[0];
         auto version = std::string{};
         if (parsed->positional.size() >= 2) {
-            version = parsed->positional[1];
+            version = registry::normalize_requested_version(tool, parsed->positional[1]);
             if (!registry::is_system_tool(tool)) {
                 auto home = resolved_intron_home(ports);
                 auto dest = installer::toolchain_path(home, tool, version);
@@ -282,7 +294,11 @@ auto cmd_update() -> intron::CommandResult {
         installer::list_installed(),
         config::load_effective_defaults());
 
-    if (current.empty()) {
+    auto has_non_system_tools = std::ranges::any_of(current, [](auto const& entry) {
+        return !registry::is_system_tool(entry.first);
+    });
+
+    if (!has_non_system_tools) {
         for (auto tool : registry::supported_tools) {
             if (registry::is_system_tool(tool)) {
                 continue;
@@ -331,7 +347,11 @@ auto cmd_upgrade(intron::CommandRequest const& request) -> intron::CommandResult
         current[tool] = version;
     }
 
-    if (current.empty()) {
+    auto has_non_system_tools = std::ranges::any_of(current, [](auto const& entry) {
+        return !registry::is_system_tool(entry.first);
+    });
+
+    if (!has_non_system_tools) {
         result.add_stdout("No toolchains installed");
         return result;
     }
@@ -386,6 +406,12 @@ auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
     std::optional<installer::MsvcEnvironment> msvc_env;
     if (defaults.contains("msvc")) {
         msvc_env = installer::msvc_environment();
+        if (!msvc_env) {
+            result.exit_code = 1;
+            result.add_stderr("error: msvc is configured as a default toolchain but was not detected");
+            result.add_stderr("hint: run 'intron install msvc 2022'");
+            return result;
+        }
     }
 
     std::vector<std::string> path_entries;

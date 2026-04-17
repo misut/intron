@@ -145,10 +145,21 @@ jobs:
       - name: Verify
         run: .\build\intron.exe help
 
+      - name: Verify MSVC provisioning
+        shell: pwsh
+        run: |
+          .\build\intron.exe install msvc 2022
+          .\build\intron.exe default msvc 2022
+
+          $whichOutput = & .\build\intron.exe which cl.exe
+          $whichOutput | Out-Host
+          if (-not ($whichOutput | Select-String -SimpleMatch 'cl.exe')) {
+            throw "missing expected cl.exe path"
+          }
+
       - name: Verify Windows env output
         shell: pwsh
         run: |
-          .\build\intron.exe default msvc 2022
           $envOutput = & .\build\intron.exe env
           $envOutput | Out-Host
 

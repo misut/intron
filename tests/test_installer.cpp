@@ -16,10 +16,12 @@ void check(bool cond, std::string_view msg) {
 
 void test_toolchain_path() {
     auto path = installer::toolchain_path("llvm", "22.1.2");
-    check(path.generic_string().contains(".intron/toolchains/llvm/22.1.2"), "llvm toolchain path");
+    check(path.generic_string().contains(".intron/toolchains/llvm/22.1.2"),
+          "llvm toolchain path");
 
     auto path2 = installer::toolchain_path("ninja", "1.12.1");
-    check(path2.generic_string().contains(".intron/toolchains/ninja/1.12.1"), "ninja toolchain path");
+    check(path2.generic_string().contains(".intron/toolchains/ninja/1.12.1"),
+          "ninja toolchain path");
 
     auto pure_home = installer::intron_home_path("/tmp/home");
     auto pure_path = installer::toolchain_path(pure_home, "llvm", "22.1.2");
@@ -35,30 +37,20 @@ void test_intron_home() {
 }
 
 void test_which_not_installed() {
-    // 설치되지 않은 도구는 nullopt 반환
     auto result = installer::which("clang++", "llvm", "99.99.99");
     check(!result.has_value(), "which returns nullopt for missing tool");
 }
 
-void test_list_installed_empty_version() {
-    // 존재하지 않는 버전 디렉토리
-    auto result = installer::which("ninja", "ninja", "99.99.99");
-    check(!result.has_value(), "which returns nullopt for missing version");
-}
-
 void test_latest_version_from_release_json() {
-    auto version = net::latest_version_from_release_json(
-        R"({"tag_name":"v0.18.3"})");
+    auto version = net::latest_version_from_release_json(R"({"tag_name":"v0.18.3"})");
     check(version.has_value(), "release json parsed");
     check(*version == "0.18.3", "leading v removed");
 
-    auto dashed = net::latest_version_from_release_json(
-        R"({"tag_name":"llvmorg-20.1.0"})");
+    auto dashed = net::latest_version_from_release_json(R"({"tag_name":"llvmorg-20.1.0"})");
     check(dashed.has_value(), "dash tag parsed");
     check(*dashed == "20.1.0", "suffix extracted from dashed tag");
 
-    auto missing = net::latest_version_from_release_json(
-        R"({"name":"missing"})");
+    auto missing = net::latest_version_from_release_json(R"({"name":"missing"})");
     check(!missing.has_value(), "missing tag_name returns nullopt");
 }
 
@@ -98,10 +90,11 @@ struct EnvGuard {
     }
 
     ~EnvGuard() {
-        if (original.has_value())
+        if (original.has_value()) {
             set_env(key, *original);
-        else
+        } else {
             clear_env(key);
+        }
     }
 
     std::string key;
@@ -137,6 +130,154 @@ void test_selected_backend_from_string() {
           "pure backend parser is case insensitive");
 }
 
+void test_parse_vswhere_instances() {
+    auto json = R"([
+      {
+        "installationPath": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools",
+        "productId": "Microsoft.VisualStudio.Product.BuildTools",
+        "channelId": "VisualStudio.17.Release",
+        "installationVersion": "17.14.36015.10"
+      },
+      {
+        "installationPath": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
+        "productId": "Microsoft.VisualStudio.Product.Community",
+        "channelId": "VisualStudio.17.Release",
+        "installationVersion": "17.13.35500.0"
+      }
+    ])";
+
+    auto instances = installer::parse_vswhere_instances(json);
+    check(instances.size() == 2, "vswhere parser keeps both instances");
+    if (instances.size() == 2) {
+        check(instances[0].installation_path.string().contains("BuildTools"),
+              "vswhere parser reads installation path");
+        check(instances[0].product_id == "Microsoft.VisualStudio.Product.BuildTools",
+              "vswhere parser reads product id");
+        check(instances[0].channel_id == "VisualStudio.17.Release",
+              "vswhere parser reads channel id");
+        check(instances[0].installation_version == "17.14.36015.10",
+              "vswhere parser reads installation version");
+    }
+}
+
+auto fake_instance(std::string install_path,
+                   std::string product_id,
+                   std::string installation_version,
+                   bool ready) -> installer::VisualStudioInstance
+{
+    auto instance = installer::VisualStudioInstance{
+        .installation_path = std::filesystem::path{install_path},
+        .product_id = std::move(product_id),
+        .channel_id = "VisualStudio.17.Release",
+        .installation_version = std::move(installation_version),
+    };
+    if (ready) {
+        instance.toolset_root = instance.installation_path / "VC" / "Tools" / "MSVC" / "14.44.35207";
+        instance.vcvars64_path = instance.installation_path / "VC" / "Auxiliary" / "Build" / "vcvars64.bat";
+        instance.cl_path = *instance.toolset_root / "bin" / "Hostx64" / "x64" / "cl.exe";
+    }
+    return instance;
+}
+
+void test_select_ready_msvc_instance() {
+    auto instances = std::vector<installer::VisualStudioInstance>{
+        fake_instance("C:/VS/Community", "Microsoft.VisualStudio.Product.Community", "17.14.1", true),
+        fake_instance("C:/VS/BuildTools", "Microsoft.VisualStudio.Product.BuildTools", "17.13.9", true),
+    };
+
+    auto selected = installer::select_ready_msvc_instance(instances);
+    check(selected.has_value(), "ready instance is selected");
+    if (selected) {
+        check(selected->is_build_tools(), "build tools instance wins over ready IDE instance");
+    }
+}
+
+void test_select_msvc_modify_target() {
+    auto instances = std::vector<installer::VisualStudioInstance>{
+        fake_instance("C:/VS/Community", "Microsoft.VisualStudio.Product.Community", "17.14.1", false),
+        fake_instance("C:/VS/BuildTools", "Microsoft.VisualStudio.Product.BuildTools", "17.13.9", false),
+    };
+
+    auto selected = installer::select_msvc_modify_target(instances);
+    check(selected.has_value(), "modify target is selected");
+    if (selected) {
+        check(selected->is_build_tools(), "build tools instance wins as modify target");
+    }
+}
+
+void test_build_msvc_install_command() {
+    auto info = registry::resolve("msvc", "2022");
+    auto command = installer::build_msvc_install_command(
+        info,
+        "C:/Users/test/.intron/downloads/vs_BuildTools.exe");
+
+    check(command.program.generic_string().ends_with("vs_BuildTools.exe"),
+          "install command uses bootstrapper");
+    auto joined = std::string{};
+    for (auto const& arg : command.args) {
+        joined += arg;
+        joined += '\n';
+    }
+    check(joined.contains("--productId"), "install command includes product id");
+    check(joined.contains("Microsoft.VisualStudio.Product.BuildTools"),
+          "install command targets build tools");
+    check(joined.contains("--channelId"), "install command includes channel id");
+    check(joined.contains("VisualStudio.17.Release"), "install command targets release channel");
+    check(joined.contains("--installPath"), "install command includes install path");
+    check(joined.contains("BuildTools"), "install command targets BuildTools path");
+    check(joined.contains("Microsoft.VisualStudio.Workload.VCTools"),
+          "install command adds VCTools workload");
+    check(joined.contains("--includeRecommended"), "install command includes recommended components");
+    check(joined.contains("--passive"), "install command uses passive mode");
+    check(joined.contains("--wait"), "install command waits for completion");
+    check(joined.contains("--norestart"), "install command disables auto restart");
+}
+
+void test_build_msvc_modify_command() {
+    auto info = registry::resolve("msvc", "2022");
+    auto instance = fake_instance(
+        "C:/VS/Community",
+        "Microsoft.VisualStudio.Product.Community",
+        "17.14.1",
+        false);
+    auto command = installer::build_msvc_modify_command(
+        info,
+        instance,
+        "C:/Program Files (x86)/Microsoft Visual Studio/Installer/setup.exe");
+
+    check(command.program.generic_string().ends_with("setup.exe"),
+          "modify command uses setup.exe");
+    auto joined = std::string{};
+    for (auto const& arg : command.args) {
+        joined += arg;
+        joined += '\n';
+    }
+    check(joined.contains("modify"), "modify command uses modify verb");
+    check(joined.contains("Microsoft.VisualStudio.Product.Community"),
+          "modify command preserves instance product id");
+    check(joined.contains("C:/VS/Community"), "modify command targets instance install path");
+    check(joined.contains("Microsoft.VisualStudio.Workload.VCTools"),
+          "modify command adds VCTools workload");
+}
+
+void test_classify_msvc_installer_exit() {
+    auto ok = installer::classify_msvc_installer_exit(0);
+    check(ok.kind == installer::VisualStudioInstallerExitKind::Success,
+          "exit code 0 is success");
+
+    auto reboot = installer::classify_msvc_installer_exit(3010);
+    check(reboot.kind == installer::VisualStudioInstallerExitKind::SuccessRebootRequired,
+          "exit code 3010 requires reboot");
+
+    auto elevation = installer::classify_msvc_installer_exit(740);
+    check(elevation.kind == installer::VisualStudioInstallerExitKind::ElevationRequired,
+          "exit code 740 requires elevation");
+
+    auto failure = installer::classify_msvc_installer_exit(1234);
+    check(failure.kind == installer::VisualStudioInstallerExitKind::Failure,
+          "unknown exit code is failure");
+}
+
 void test_msvc_helper_paths() {
     auto root = std::filesystem::path{"C:/VS/VC/Tools/MSVC/14.40.33807"};
     auto bin = installer::msvc_bin_path(root);
@@ -147,6 +288,36 @@ void test_msvc_helper_paths() {
     check(asan.generic_string().ends_with(
               "VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64/clang_rt.asan_dynamic-x86_64.dll"),
           "msvc asan runtime path points at clang_rt dll");
+}
+
+void test_msvc_binary_path() {
+    auto temp = std::filesystem::temp_directory_path() / "intron-msvc-binary-path-test";
+    std::error_code ec;
+    std::filesystem::remove_all(temp, ec);
+    auto bin_dir = temp / "VC" / "Tools" / "MSVC" / "14.44.35207" / "bin" / "Hostx64" / "x64";
+    std::filesystem::create_directories(bin_dir);
+    std::ofstream{bin_dir / "cl.exe"}.put('\n');
+    std::ofstream{bin_dir / "link.exe"}.put('\n');
+
+    auto instance = fake_instance(
+        temp.string(),
+        "Microsoft.VisualStudio.Product.BuildTools",
+        "17.14.1",
+        true);
+
+    auto cl = installer::msvc_binary_path(instance, "cl.exe");
+    check(cl.has_value(), "cl.exe path is produced for ready instance");
+    if (cl) {
+        check(cl->generic_string().ends_with("/cl.exe"), "cl.exe path ends with cl.exe");
+    }
+
+    auto link = installer::msvc_binary_path(instance, "link");
+    check(link.has_value(), "link path is produced for ready instance");
+    if (link) {
+        check(link->generic_string().ends_with("/link.exe"), "link path ends with link.exe");
+    }
+
+    std::filesystem::remove_all(temp, ec);
 }
 
 void test_install_plan() {
@@ -161,11 +332,14 @@ void test_install_plan() {
     check(plan.download->verify_checksum, "install plan tracks checksum requirement");
     check(plan.archive_name.contains("cmake-4.3.1"), "install plan records archive name");
 
-    auto llvm_plan = intron::make_install_plan(
-        "/tmp/intron-home",
-        registry::resolve("llvm", "22.1.2"));
+    auto llvm_plan =
+        intron::make_install_plan("/tmp/intron-home", registry::resolve("llvm", "22.1.2"));
     check(llvm_plan.post_install_actions.size() == 1,
           "llvm install plan schedules post-install action");
+
+    auto msvc_plan =
+        intron::make_install_plan("/tmp/intron-home", registry::resolve("msvc", "2022"));
+    check(!msvc_plan.download.has_value(), "msvc install plan has no archive download");
 }
 
 void test_msvc_environment_smoke() {
@@ -177,7 +351,9 @@ void test_msvc_environment_smoke() {
     }
     auto env = installer::msvc_environment();
     check(env.has_value(), "msvc environment is available when msvc is installed");
-    if (!env.has_value()) return;
+    if (!env.has_value()) {
+        return;
+    }
     check(std::filesystem::exists(env->cl), "msvc environment exposes cl.exe");
     check(env->variables.contains("INCLUDE"), "msvc environment includes INCLUDE");
     check(env->variables.contains("LIB"), "msvc environment includes LIB");
@@ -189,12 +365,18 @@ int main() {
     test_toolchain_path();
     test_intron_home();
     test_which_not_installed();
-    test_list_installed_empty_version();
     test_latest_version_from_release_json();
     test_github_api_headers();
     test_selected_backend_from_env();
     test_selected_backend_from_string();
+    test_parse_vswhere_instances();
+    test_select_ready_msvc_instance();
+    test_select_msvc_modify_target();
+    test_build_msvc_install_command();
+    test_build_msvc_modify_command();
+    test_classify_msvc_installer_exit();
     test_msvc_helper_paths();
+    test_msvc_binary_path();
     test_install_plan();
     test_msvc_environment_smoke();
 
