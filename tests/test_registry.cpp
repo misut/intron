@@ -94,11 +94,41 @@ void test_latest_release_api() {
 void test_resolve_msvc() {
     auto info = registry::resolve("msvc", "latest");
     check(info.name == "msvc", "msvc name");
-    check(info.version == "latest", "msvc version");
+    check(info.version == "2022", "msvc latest normalizes to 2022");
     check(info.url.empty(), "msvc url empty (system tool)");
     check(info.archive_type.empty(), "msvc archive_type empty");
+    check(info.visual_studio.has_value(), "msvc has visual studio installer metadata");
+    if (info.visual_studio) {
+        check(info.visual_studio->bootstrapper_url.contains("vs_BuildTools.exe"),
+              "msvc bootstrapper url points to build tools");
+        check(info.visual_studio->product_id == "Microsoft.VisualStudio.Product.BuildTools",
+              "msvc product id");
+        check(info.visual_studio->channel_id == "VisualStudio.17.Release",
+              "msvc channel id");
+        check(info.visual_studio->workload_id == "Microsoft.VisualStudio.Workload.VCTools",
+              "msvc workload id");
+        check(info.visual_studio->install_path.string().contains("BuildTools"),
+              "msvc install path contains BuildTools");
+    }
     check(registry::is_system_tool("msvc"), "msvc is system tool");
     check(!registry::is_system_tool("llvm"), "llvm is not system tool");
+}
+
+void test_normalize_requested_version() {
+    check(registry::normalize_requested_version("llvm", "22.1.2") == "22.1.2",
+          "non-system tool version is unchanged");
+    check(registry::normalize_requested_version("msvc", "latest") == "2022",
+          "msvc latest aliases to 2022");
+    check(registry::normalize_requested_version("msvc", "2022") == "2022",
+          "msvc 2022 remains 2022");
+
+    bool threw = false;
+    try {
+        (void)registry::normalize_requested_version("msvc", "2019");
+    } catch (std::runtime_error const&) {
+        threw = true;
+    }
+    check(threw, "unsupported msvc version throws");
 }
 
 void test_platform_name() {
@@ -134,6 +164,7 @@ int main() {
     test_resolve_ninja();
     test_resolve_wasi_sdk();
     test_resolve_msvc();
+    test_normalize_requested_version();
     test_platform_name();
     test_latest_release_api();
     test_detect_platform();

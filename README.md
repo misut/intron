@@ -62,7 +62,22 @@ The binary will be at `.exon/release/intron`.
 
 #### Windows (MSVC bootstrap)
 
-From a **Visual Studio Developer Command Prompt** (or PowerShell for VS 2022):
+From a regular PowerShell session:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
+intron install msvc 2022
+intron default msvc 2022
+intron env
+```
+
+`intron install msvc 2022` will:
+
+- reuse a compatible Visual Studio 2022 / Build Tools 2022 instance when one already exists
+- modify an existing Visual Studio 2022 instance to add the C++ workload when needed
+- install a dedicated Build Tools 2022 instance when no compatible instance exists
+
+Once `intron env` is applied, you can bootstrap intron itself from a normal shell:
 
 ```powershell
 git clone https://github.com/misut/intron
@@ -77,13 +92,14 @@ cmake --build build
 .\build\intron.exe help
 ```
 
-Requirements: Visual Studio 2022 17.5+, CMake 3.30+, Ninja.
+Requirements: Windows x64, Visual Studio 2022 channel support, CMake 3.30+, Ninja.
 
 ### Windows developer environment
 
-When `msvc` is selected as the default toolchain on Windows, `intron env` now prints a full developer environment instead of just `CC` and `CXX`:
+When `msvc` is selected as the default toolchain on Windows, `intron env` prints a full developer environment instead of just `CC` and `CXX`:
 
 ```powershell
+intron install msvc 2022
 intron default msvc 2022
 intron env
 ```
