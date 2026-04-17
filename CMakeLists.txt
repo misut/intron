@@ -32,6 +32,9 @@ target_sources(intron-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/config.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/installer.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.app.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.domain.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.edge.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
 )
@@ -49,6 +52,9 @@ target_link_libraries(intron PRIVATE intron-modules)
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/config.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/installer.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.app.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.domain.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.edge.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
@@ -68,6 +74,23 @@ endif()
 if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(intron PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
+endif()
+
+add_executable(test-test_app)
+target_sources(test-test_app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_app.cpp
+)
+target_link_libraries(test-test_app PRIVATE
+    intron-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_link_options(test-test_app PRIVATE
         -framework
         Security
         -Wl,-framework,CoreFoundation
