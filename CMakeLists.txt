@@ -14,14 +14,18 @@ if(MSVC)
 endif()
 
 include(FetchContent)
+FetchContent_Declare(cppx
+    GIT_REPOSITORY https://github.com/misut/cppx.git
+    GIT_TAG v1.4.0
+    GIT_SHALLOW ON
+)
 FetchContent_Declare(tomlcpp
     GIT_REPOSITORY https://github.com/misut/tomlcpp.git
     GIT_TAG v0.3.0
     GIT_SHALLOW ON
 )
+FetchContent_MakeAvailable(cppx)
 FetchContent_MakeAvailable(tomlcpp)
-
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../cppx/feat/shared-edge-primitives ${CMAKE_BINARY_DIR}/_deps/cppx-build)
 
 add_library(intron-modules)
 target_sources(intron-modules
@@ -35,8 +39,8 @@ target_sources(intron-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
 )
 target_link_libraries(intron-modules PUBLIC
-    tomlcpp
     cppx
+    tomlcpp
 )
 
 add_executable(intron)

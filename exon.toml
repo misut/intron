@@ -8,10 +8,8 @@ type = "bin"
 standard = 23
 
 [dependencies]
+"github.com/misut/cppx" = "1.4.0"
 "github.com/misut/tomlcpp" = "0.3.0"
-
-[dependencies.path]
-cppx = "/Users/kakao/Private/.worktrees/cppx/feat/shared-edge-primitives"
 
 [target.'cfg(os = "linux")'.build]
 ldflags = ["-lssl", "-lcrypto"]
