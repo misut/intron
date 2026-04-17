@@ -68,7 +68,6 @@ From a regular PowerShell session:
 iwr -useb https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
 intron install msvc 2022
 intron default msvc 2022 --platform windows
-intron env
 ```
 
 `intron install msvc 2022` will:
@@ -77,12 +76,20 @@ intron env
 - modify an existing Visual Studio 2022 instance to add the C++ workload when needed
 - install a dedicated Build Tools 2022 instance when no compatible instance exists
 
-Once `intron env` is applied, you can bootstrap intron itself from a normal shell:
+Use `intron env` to export the resolved environment into the current shell, or
+`intron exec -- <command> [args...]` to run a one-off command with the same
+resolved variables:
+
+```powershell
+Invoke-Expression ((intron env) -join "`n")
+```
+
+Once that environment is active, you can bootstrap intron itself from a normal shell:
 
 ```powershell
 git clone https://github.com/misut/intron
 git clone https://github.com/misut/tomlcpp --branch v0.3.0
-git clone https://github.com/misut/cppx --branch v1.1.0
+git clone https://github.com/misut/cppx --branch v1.4.0
 cd intron
 cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
@@ -90,6 +97,21 @@ cmake -G Ninja -S .github/cmake -B build `
   -DCPPX_DIR=..\cppx
 cmake --build build
 .\build\intron.exe help
+```
+
+Or keep the current shell untouched and run the same flow through `intron exec`:
+
+```powershell
+git clone https://github.com/misut/intron
+git clone https://github.com/misut/tomlcpp --branch v0.3.0
+git clone https://github.com/misut/cppx --branch v1.4.0
+cd intron
+intron exec -- cmake -G Ninja -S .github/cmake -B build `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DTOMLCPP_DIR=..\tomlcpp `
+  -DCPPX_DIR=..\cppx
+intron exec -- cmake --build build
+intron exec -- .\build\intron.exe help
 ```
 
 Requirements: Windows x64, Visual Studio 2022 channel support, CMake 3.30+, Ninja.
@@ -152,6 +174,7 @@ intron exec -- exon test
 |------|--------|----------|
 | LLVM | [llvm/llvm-project](https://github.com/llvm/llvm-project/releases) | clang, clang++, lld, lldb, ... |
 | CMake | [Kitware/CMake](https://github.com/Kitware/CMake/releases) | cmake, ctest, cpack |
+| MSVC | Visual Studio 2022 / Build Tools 2022 | cl.exe, link.exe, vcvars64.bat (system tool) |
 | Ninja | [ninja-build/ninja](https://github.com/ninja-build/ninja/releases) | ninja |
 | wasi-sdk | [WebAssembly/wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) | WASI cross-compiler (via `$WASI_SDK_PATH`) |
 | wasmtime | [bytecodealliance/wasmtime](https://github.com/bytecodealliance/wasmtime/releases) | wasmtime |
@@ -211,7 +234,8 @@ llvm = "22.1.2"
 msvc = "2022"
 ```
 
-Project config overrides global defaults for `which`, `env`, `list`, and `update`.
+Project config is used by `install` (when called without args), `which`, `env`,
+`exec`, `list`, and `update`.
 
 ## Directory Layout
 

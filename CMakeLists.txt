@@ -59,26 +59,8 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.18.10\""
+    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.19.0\""
 )
-
-if(PROJECT_IS_TOP_LEVEL)
-
-    target_link_options(intron-modules PRIVATE
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
-endif()
-
-if(PROJECT_IS_TOP_LEVEL)
-
-    target_link_options(intron PRIVATE
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
-endif()
 
 add_executable(test-test_app)
 target_sources(test-test_app PRIVATE
@@ -88,15 +70,6 @@ target_link_libraries(test-test_app PRIVATE
     intron-modules
 )
 
-if(PROJECT_IS_TOP_LEVEL)
-
-    target_link_options(test-test_app PRIVATE
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
-endif()
-
 add_executable(test-test_config)
 target_sources(test-test_config PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_config.cpp
@@ -104,15 +77,6 @@ target_sources(test-test_config PRIVATE
 target_link_libraries(test-test_config PRIVATE
     intron-modules
 )
-
-if(PROJECT_IS_TOP_LEVEL)
-
-    target_link_options(test-test_config PRIVATE
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
-endif()
 
 add_executable(test-test_installer)
 target_sources(test-test_installer PRIVATE
@@ -122,15 +86,6 @@ target_link_libraries(test-test_installer PRIVATE
     intron-modules
 )
 
-if(PROJECT_IS_TOP_LEVEL)
-
-    target_link_options(test-test_installer PRIVATE
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
-endif()
-
 add_executable(test-test_registry)
 target_sources(test-test_registry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_registry.cpp
@@ -138,12 +93,3 @@ target_sources(test-test_registry PRIVATE
 target_link_libraries(test-test_registry PRIVATE
     intron-modules
 )
-
-if(PROJECT_IS_TOP_LEVEL)
-
-    target_link_options(test-test_registry PRIVATE
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
-endif()
