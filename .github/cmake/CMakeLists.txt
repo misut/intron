@@ -37,12 +37,7 @@ target_sources(cppx-modules
 )
 add_library(cppx ALIAS cppx-modules)
 
-add_executable(intron)
-target_sources(intron PRIVATE
-    ${INTRON_SOURCE_DIR}/src/main.cpp
-)
-target_sources(intron
-    PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${INTRON_SOURCE_DIR} FILES
+set(INTRON_MODULE_FILES
     ${INTRON_SOURCE_DIR}/src/config.cppm
     ${INTRON_SOURCE_DIR}/src/installer.cppm
     ${INTRON_SOURCE_DIR}/src/intron.app.cppm
@@ -51,5 +46,19 @@ target_sources(intron
     ${INTRON_SOURCE_DIR}/src/net.cppm
     ${INTRON_SOURCE_DIR}/src/registry.cppm
 )
-target_compile_definitions(intron PRIVATE EXON_PKG_VERSION="${INTRON_VERSION}")
+set_source_files_properties(
+    ${INTRON_MODULE_FILES}
+    ${INTRON_SOURCE_DIR}/src/main.cpp
+    PROPERTIES COMPILE_DEFINITIONS
+    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"${INTRON_VERSION}\""
+)
+
+add_executable(intron)
+target_sources(intron PRIVATE
+    ${INTRON_SOURCE_DIR}/src/main.cpp
+)
+target_sources(intron
+    PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${INTRON_SOURCE_DIR} FILES
+    ${INTRON_MODULE_FILES}
+)
 target_link_libraries(intron PRIVATE tomlcpp cppx)
