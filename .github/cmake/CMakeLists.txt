@@ -26,23 +26,14 @@ endif()
 
 add_subdirectory(${TOMLCPP_DIR} tomlcpp)
 
-# cppx is shipped as separate .cppm submodules; declare them inline
-# instead of recursing into its CMakeLists (which is exon-generated and
-# expects the full exon build environment).
+# cppx is shipped as separate .cppm submodules; pull them in directly
+# instead of recursing into its exon-generated CMakeLists.
+file(GLOB CPPX_MODULE_FILES CONFIGURE_DEPENDS "${CPPX_DIR}/src/*.cppm")
+
 add_library(cppx-modules)
 target_sources(cppx-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CPPX_DIR}/src FILES
-    ${CPPX_DIR}/src/cppx.async.cppm
-    ${CPPX_DIR}/src/cppx.async.system.cppm
-    ${CPPX_DIR}/src/cppx.cppm
-    ${CPPX_DIR}/src/cppx.env.cppm
-    ${CPPX_DIR}/src/cppx.env.system.cppm
-    ${CPPX_DIR}/src/cppx.http.cppm
-    ${CPPX_DIR}/src/cppx.http.client.cppm
-    ${CPPX_DIR}/src/cppx.http.server.cppm
-    ${CPPX_DIR}/src/cppx.http.system.cppm
-    ${CPPX_DIR}/src/cppx.platform.cppm
-    ${CPPX_DIR}/src/cppx.reflect.cppm
+    ${CPPX_MODULE_FILES}
 )
 add_library(cppx ALIAS cppx-modules)
 
