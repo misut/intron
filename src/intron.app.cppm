@@ -438,10 +438,12 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
     if (defaults.contains("msvc")) {
         msvc_env = installer::msvc_environment();
         if (!msvc_env) {
-            result.exit_code = 1;
+            auto result = intron::CommandResult{
+                .exit_code = 1,
+            };
             result.add_stderr("error: msvc is configured as a default toolchain but was not detected");
             result.add_stderr("hint: run 'intron install msvc 2022'");
-            return result;
+            return std::unexpected(std::move(result));
         }
     }
 
