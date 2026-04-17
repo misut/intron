@@ -1,4 +1,7 @@
+#include <cstdlib>
+
 import std;
+import cppx.http;
 import installer;
 import net;
 
@@ -61,6 +64,80 @@ void test_github_api_headers() {
           "github api accept header");
 }
 
+void set_env(std::string_view name, std::string_view value) {
+    auto env_name = std::string{name};
+    auto env_value = std::string{value};
+#ifdef _WIN32
+    ::_putenv_s(env_name.c_str(), env_value.c_str());
+#else
+    ::setenv(env_name.c_str(), env_value.c_str(), 1);
+#endif
+}
+
+void clear_env(std::string_view name) {
+    auto env_name = std::string{name};
+#ifdef _WIN32
+    ::_putenv_s(env_name.c_str(), "");
+#else
+    ::unsetenv(env_name.c_str());
+#endif
+}
+
+struct EnvGuard {
+    explicit EnvGuard(std::string_view key)
+        : key(key)
+    {
+        if (auto* value = std::getenv(this->key.c_str()); value) {
+            original = value;
+        }
+    }
+
+    ~EnvGuard() {
+        if (original.has_value())
+            set_env(key, *original);
+        else
+            clear_env(key);
+    }
+
+    std::string key;
+    std::optional<std::string> original;
+};
+
+void test_selected_backend_from_env() {
+    auto guard = EnvGuard{"INTRON_NET_BACKEND"};
+
+    clear_env("INTRON_NET_BACKEND");
+    check(net::selected_backend_from_env() == net::Backend::Auto,
+          "net backend defaults to auto");
+
+    set_env("INTRON_NET_BACKEND", "cppx");
+    check(net::selected_backend_from_env() == net::Backend::Cppx,
+          "cppx backend can be forced");
+
+    set_env("INTRON_NET_BACKEND", "SHELL");
+    check(net::selected_backend_from_env() == net::Backend::Shell,
+          "shell backend parsing is case insensitive");
+
+    set_env("INTRON_NET_BACKEND", "bogus");
+    check(net::selected_backend_from_env() == net::Backend::Auto,
+          "invalid backend falls back to auto");
+}
+
+void test_should_fallback() {
+    check(net::should_fallback(cppx::http::http_error::response_parse_failed),
+          "response parse failures are retryable");
+    check(net::should_fallback(cppx::http::http_error::connection_failed),
+          "connection failures are retryable");
+    check(net::should_fallback(cppx::http::http_error::tls_failed),
+          "tls failures are retryable");
+    check(net::should_fallback(cppx::http::http_error::timeout),
+          "timeouts are retryable");
+    check(!net::should_fallback(cppx::http::http_error::send_failed),
+          "send failures do not trigger shell fallback");
+    check(!net::should_fallback(cppx::http::http_error::redirect_limit),
+          "redirect limit errors do not trigger shell fallback");
+}
+
 void test_msvc_helper_paths() {
     auto root = std::filesystem::path{"C:/VS/VC/Tools/MSVC/14.40.33807"};
     auto bin = installer::msvc_bin_path(root);
@@ -97,6 +174,8 @@ int main() {
     test_list_installed_empty_version();
     test_latest_version_from_release_json();
     test_github_api_headers();
+    test_selected_backend_from_env();
+    test_should_fallback();
     test_msvc_helper_paths();
     test_msvc_environment_smoke();
 
