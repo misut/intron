@@ -1,22 +1,35 @@
 export module installer;
 import std;
 import cppx.env.system;
+import intron.domain;
 import net;
 export import registry;
 
 export namespace installer {
 
+std::filesystem::path intron_home_path(std::filesystem::path const& home_dir) {
+    return home_dir / ".intron";
+}
+
 std::filesystem::path intron_home() {
     auto home = cppx::env::system::home_dir();
     if (!home)
         throw std::runtime_error("HOME environment variable not set");
-    auto path = *home / ".intron";
+    auto path = intron_home_path(*home);
     std::filesystem::create_directories(path);
     return path;
 }
 
+std::filesystem::path toolchain_path(
+    std::filesystem::path const& intron_home,
+    std::string_view tool,
+    std::string_view version)
+{
+    return intron_home / "toolchains" / tool / version;
+}
+
 std::filesystem::path toolchain_path(std::string_view tool, std::string_view version) {
-    return intron_home() / "toolchains" / tool / version;
+    return toolchain_path(intron_home(), tool, version);
 }
 
 namespace detail {
@@ -547,7 +560,11 @@ bool install(registry::ToolInfo const& info) {
     if (registry::is_system_tool(info.name))
         return install_system_tool(info);
 
-    auto dest = toolchain_path(info.name, info.version);
+    auto home = intron_home();
+    auto cached_archive = intron::make_install_plan(home, info).download;
+    auto use_cached_archive = cached_archive && std::filesystem::exists(cached_archive->archive_path);
+    auto plan = intron::make_install_plan(home, info, use_cached_archive);
+    auto dest = plan.dest;
 
     // Already installed
     if (std::filesystem::exists(dest) && !std::filesystem::is_empty(dest)) {
@@ -567,14 +584,16 @@ bool install(registry::ToolInfo const& info) {
         }
     }
 
-    auto downloads = intron_home() / "downloads";
-    std::filesystem::create_directories(downloads);
+    if (!plan.download) {
+        std::println(std::cerr, "error: missing download plan for {}", info.name);
+        return false;
+    }
 
-    // Extract archive filename from URL
-    auto url_sv = std::string_view{info.url};
-    auto slash = url_sv.rfind('/');
-    auto archive_name = std::string{url_sv.substr(slash + 1)};
-    auto archive_path = downloads / archive_name;
+    auto downloads = plan.downloads_dir;
+    auto archive_name = plan.archive_name;
+    auto archive_path = plan.download->archive_path;
+
+    std::filesystem::create_directories(downloads);
 
     // Cleanup guard on failure
     bool success = false;
@@ -585,12 +604,12 @@ bool install(registry::ToolInfo const& info) {
     };
 
     // Download (reuse cached archive if available)
-    if (std::filesystem::exists(archive_path)) {
+    if (plan.download->use_cached_archive) {
         std::println("Using cached archive for {} {}...", info.name, info.version);
     } else {
         std::println("Downloading {} {}...", info.name, info.version);
         auto dl = net::download_file(
-            info.url, archive_path, net::user_agent_headers(detail::user_agent()));
+            plan.download->url, archive_path, net::user_agent_headers(detail::user_agent()));
         if (!dl) {
             std::println(std::cerr, "error: {}", dl.error());
             std::filesystem::remove(archive_path);
@@ -600,16 +619,20 @@ bool install(registry::ToolInfo const& info) {
     }
 
     // Checksum verification
-    if (!info.checksum_url.empty()) {
+    if (plan.download->verify_checksum) {
         std::println("Verifying checksum...");
-        if (!detail::verify_checksum(archive_path, archive_name, downloads, info.checksum_url)) {
+        if (!detail::verify_checksum(
+                archive_path,
+                archive_name,
+                downloads,
+                plan.download->checksum_url)) {
             cleanup();
             return false;
         }
     }
 
     // Extract to staging directory (atomic install: staging → rename)
-    auto staging = intron_home() / "staging" / std::format("{}-{}", info.name, info.version);
+    auto staging = plan.staging_dir;
     std::filesystem::create_directories(staging);
 
     std::println("Extracting...");
@@ -632,8 +655,12 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::rename(staging, dest);
 
     // Generate clang config + wrapper scripts after LLVM install
-    if (info.name == "llvm") {
-        detail::setup_llvm_config(dest, info.version);
+    for (auto const& action : plan.post_install_actions) {
+        switch (action.kind) {
+        case intron::PostInstallActionKind::SetupLlvmConfig:
+            detail::setup_llvm_config(action.dest, action.version);
+            break;
+        }
     }
 
     // Verify the installed binary is executable on this platform

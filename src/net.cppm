@@ -7,6 +7,7 @@ export namespace net {
 
 enum class Backend { Auto, Cppx, Shell };
 
+auto selected_backend_from_string(std::optional<std::string_view> value) -> Backend;
 auto selected_backend_from_env() -> Backend;
 auto should_fallback(cppx::http::http_error error) -> bool;
 
@@ -94,17 +95,23 @@ auto check_command(std::string_view name) -> bool {
     }
 }
 
-auto selected_backend_from_env_impl() -> net::Backend {
-    auto const* raw = std::getenv("INTRON_NET_BACKEND");
-    if (!raw || !*raw)
+auto selected_backend_from_string_impl(std::optional<std::string_view> raw) -> net::Backend {
+    if (!raw || raw->empty())
         return net::Backend::Auto;
 
-    auto value = ascii_lower(raw);
+    auto value = ascii_lower(*raw);
     if (value == "cppx")
         return net::Backend::Cppx;
     if (value == "shell")
         return net::Backend::Shell;
     return net::Backend::Auto;
+}
+
+auto selected_backend_from_env_impl() -> net::Backend {
+    auto const* raw = std::getenv("INTRON_NET_BACKEND");
+    if (!raw || !*raw)
+        return net::Backend::Auto;
+    return selected_backend_from_string_impl(raw);
 }
 
 auto should_fallback_impl(cppx::http::http_error error) -> bool {
@@ -337,6 +344,10 @@ auto download_via_cppx(std::string_view url,
 } // namespace
 
 export namespace net {
+
+auto selected_backend_from_string(std::optional<std::string_view> value) -> Backend {
+    return selected_backend_from_string_impl(value);
+}
 
 auto selected_backend_from_env() -> Backend {
     return selected_backend_from_env_impl();

@@ -1,71 +1,156 @@
 export module config;
 import std;
 import cppx.env.system;
+import intron.domain;
 import registry;
 import toml;
+
+namespace {
+
+auto read_text_file(std::filesystem::path const& path) -> std::string {
+    auto in = std::ifstream{path, std::ios::binary};
+    if (!in) {
+        throw std::runtime_error(std::format("cannot read config file: {}", path.string()));
+    }
+    return std::string{
+        std::istreambuf_iterator<char>{in},
+        std::istreambuf_iterator<char>{},
+    };
+}
+
+auto parse_document_from_table(toml::Table const& table, std::string_view section)
+    -> intron::ConfigDocument
+{
+    auto document = intron::ConfigDocument{};
+    auto key = std::string{section};
+    if (!table.contains(key)) {
+        return document;
+    }
+
+    auto const& root = table.at(key).as_table();
+    for (auto const& [name, value] : root) {
+        if (value.is_string()) {
+            document.common[name] = value.as_string();
+            continue;
+        }
+        if (!value.is_table()) {
+            continue;
+        }
+        auto& platform_values = document.platforms[name];
+        for (auto const& [tool, tool_value] : value.as_table()) {
+            if (tool_value.is_string()) {
+                platform_values[tool] = tool_value.as_string();
+            }
+        }
+    }
+    return document;
+}
+
+auto parse_document_string(std::string_view input, std::string_view section)
+    -> intron::ConfigDocument
+{
+    return parse_document_from_table(toml::parse(input), section);
+}
+
+auto serialize_document_string(intron::ConfigDocument const& document,
+                               std::string_view section) -> std::string
+{
+    auto rendered = std::string{};
+    rendered += std::format("[{}]\n", section);
+    for (auto const& [tool, version] : document.common) {
+        rendered += std::format("{} = \"{}\"\n", tool, version);
+    }
+    for (auto const& [platform, values] : document.platforms) {
+        if (values.empty()) {
+            continue;
+        }
+        rendered += std::format("\n[{}.{}]\n", section, platform);
+        for (auto const& [tool, version] : values) {
+            rendered += std::format("{} = \"{}\"\n", tool, version);
+        }
+    }
+    return rendered;
+}
+
+auto load_document(std::filesystem::path const& path, std::string_view section)
+    -> intron::ConfigDocument
+{
+    if (!std::filesystem::exists(path)) {
+        return {};
+    }
+    return parse_document_string(read_text_file(path), section);
+}
+
+auto write_document(std::filesystem::path const& path,
+                    std::string_view section,
+                    intron::ConfigDocument const& document) -> void
+{
+    auto parent = path.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    auto out = std::ofstream{path};
+    if (!out) {
+        throw std::runtime_error(std::format("cannot write config file: {}", path.string()));
+    }
+    out << serialize_document_string(document, section);
+}
+
+} // namespace
 
 export namespace config {
 
 std::filesystem::path config_path() {
     auto home = cppx::env::system::home_dir();
-    if (!home)
+    if (!home) {
         throw std::runtime_error("HOME environment variable not set");
+    }
     return *home / ".intron" / "config.toml";
 }
 
-constexpr std::array<std::string_view, 3> valid_platforms = {"linux", "macos", "windows"};
+using ToolchainConfig = intron::ConfigDocument;
+using DefaultsConfig = intron::ConfigDocument;
 
 bool is_valid_platform(std::string_view name) {
-    return std::ranges::find(valid_platforms, name) != valid_platforms.end();
+    return intron::is_valid_platform(name);
 }
 
-// Load a TOML section as flat key-value pairs (ignores sub-tables)
+auto parse_config_document(std::string_view input, std::string_view section)
+    -> intron::ConfigDocument
+{
+    return parse_document_string(input, section);
+}
+
+auto serialize_config_document(intron::ConfigDocument const& document,
+                               std::string_view section) -> std::string
+{
+    return serialize_document_string(document, section);
+}
+
+auto merge_document(intron::ConfigDocument const& document, std::string_view platform)
+    -> std::map<std::string, std::string>
+{
+    return intron::merge_config_document(document, platform);
+}
+
 std::map<std::string, std::string> load_toml_section(
-    std::filesystem::path const& path, std::string_view section) {
-    std::map<std::string, std::string> result;
-    if (!std::filesystem::exists(path)) return result;
-    auto table = toml::parse_file(path.string());
-    auto sec_key = std::string{section};
-    if (table.contains(sec_key)) {
-        auto const& sec = table.at(sec_key).as_table();
-        for (auto const& [key, value] : sec)
-            if (value.is_string()) result[key] = value.as_string();
-    }
-    return result;
+    std::filesystem::path const& path,
+    std::string_view section)
+{
+    return load_document(path, section).common;
 }
 
-// Load a TOML section with platform-specific merge:
-// common entries + current platform's sub-table entries (platform overrides common)
 std::map<std::string, std::string> load_section_with_platform(
-    std::filesystem::path const& path, std::string_view section) {
-    std::map<std::string, std::string> result;
-    if (!std::filesystem::exists(path)) return result;
-    auto table = toml::parse_file(path.string());
-    auto sec_key = std::string{section};
-    if (!table.contains(sec_key)) return result;
-
-    auto const& sec = table.at(sec_key).as_table();
-
-    // Common entries (string values only, sub-tables are skipped)
-    for (auto const& [key, value] : sec)
-        if (value.is_string()) result[key] = value.as_string();
-
-    // Platform-specific entries (merge over common)
-    auto plat = std::string{registry::platform_name()};
-    if (sec.contains(plat)) {
-        auto const& plat_table = sec.at(plat).as_table();
-        for (auto const& [key, value] : plat_table)
-            if (value.is_string()) result[key] = value.as_string();
-    }
-
-    return result;
+    std::filesystem::path const& path,
+    std::string_view section)
+{
+    return merge_document(load_document(path, section), registry::platform_name());
 }
 
 std::map<std::string, std::string> load_defaults() {
     return load_section_with_platform(config_path(), "defaults");
 }
 
-// Search for .intron.toml from current directory upward
 std::optional<std::filesystem::path> find_project_config() {
     auto dir = std::filesystem::current_path();
     while (true) {
@@ -74,7 +159,9 @@ std::optional<std::filesystem::path> find_project_config() {
             return candidate;
         }
         auto parent = dir.parent_path();
-        if (parent == dir) break;
+        if (parent == dir) {
+            break;
+        }
         dir = parent;
     }
     return std::nullopt;
@@ -82,137 +169,60 @@ std::optional<std::filesystem::path> find_project_config() {
 
 std::map<std::string, std::string> load_project_toolchain() {
     auto path = find_project_config();
-    if (!path) return {};
+    if (!path) {
+        return {};
+    }
     return load_section_with_platform(*path, "toolchain");
 }
 
-// Look up: project config > global defaults
 std::optional<std::string> get_default(std::string_view tool) {
-    // Project config takes priority
     auto project = load_project_toolchain();
-    auto it = project.find(std::string{tool});
-    if (it != project.end()) {
+    if (auto it = project.find(std::string{tool}); it != project.end()) {
         return it->second;
     }
-    // Global defaults
+
     auto defaults = load_defaults();
-    auto it2 = defaults.find(std::string{tool});
-    if (it2 != defaults.end()) {
-        return it2->second;
+    if (auto it = defaults.find(std::string{tool}); it != defaults.end()) {
+        return it->second;
     }
     return std::nullopt;
 }
 
-// Merge project + global defaults (project takes priority)
 std::map<std::string, std::string> load_effective_defaults() {
     auto defaults = load_defaults();
-    auto project = load_project_toolchain();
-    for (auto const& [k, v] : project) {
-        defaults[k] = v;
+    for (auto const& [tool, version] : load_project_toolchain()) {
+        defaults[tool] = version;
     }
     return defaults;
 }
 
-// Full project config with platform sections (not filtered by current platform)
-struct ToolchainConfig {
-    std::map<std::string, std::string> common;
-    std::map<std::string, std::map<std::string, std::string>> platforms;
-};
-
 ToolchainConfig load_full_project_config() {
-    ToolchainConfig config;
     auto path = find_project_config();
-    if (!path) return config;
-    if (!std::filesystem::exists(*path)) return config;
-
-    auto table = toml::parse_file(path->string());
-    if (!table.contains("toolchain")) return config;
-
-    auto const& sec = table.at("toolchain").as_table();
-    for (auto const& [key, value] : sec) {
-        if (value.is_string()) {
-            config.common[key] = value.as_string();
-        } else if (value.is_table()) {
-            auto& plat_map = config.platforms[key];
-            for (auto const& [k, v] : value.as_table())
-                if (v.is_string()) plat_map[k] = v.as_string();
-        }
+    if (!path) {
+        return {};
     }
-    return config;
+    return load_document(*path, "toolchain");
 }
 
 void write_project_config(ToolchainConfig const& config) {
-    auto out = std::ofstream{".intron.toml"};
-    if (!out)
-        throw std::runtime_error("cannot write .intron.toml");
-
-    out << "[toolchain]\n";
-    for (auto const& [k, v] : config.common)
-        out << std::format("{} = \"{}\"\n", k, v);
-
-    for (auto const& [plat, tools] : config.platforms) {
-        if (tools.empty()) continue;
-        out << std::format("\n[toolchain.{}]\n", plat);
-        for (auto const& [k, v] : tools)
-            out << std::format("{} = \"{}\"\n", k, v);
-    }
+    write_document(".intron.toml", "toolchain", config);
 }
-
-// Full defaults config with platform sections
-struct DefaultsConfig {
-    std::map<std::string, std::string> common;
-    std::map<std::string, std::map<std::string, std::string>> platforms;
-};
 
 DefaultsConfig load_full_defaults() {
-    DefaultsConfig config;
-    auto path = config_path();
-    if (!std::filesystem::exists(path)) return config;
-
-    auto table = toml::parse_file(path.string());
-    if (!table.contains("defaults")) return config;
-
-    auto const& sec = table.at("defaults").as_table();
-    for (auto const& [key, value] : sec) {
-        if (value.is_string()) {
-            config.common[key] = value.as_string();
-        } else if (value.is_table()) {
-            auto& plat_map = config.platforms[key];
-            for (auto const& [k, v] : value.as_table())
-                if (v.is_string()) plat_map[k] = v.as_string();
-        }
-    }
-    return config;
+    return load_document(config_path(), "defaults");
 }
 
-void set_default(std::string_view tool, std::string_view version,
-                 std::string_view platform = {}) {
+void set_default(std::string_view tool,
+                 std::string_view version,
+                 std::string_view platform = {})
+{
     auto config = load_full_defaults();
-
     if (platform.empty()) {
         config.common[std::string{tool}] = std::string{version};
     } else {
         config.platforms[std::string{platform}][std::string{tool}] = std::string{version};
     }
-
-    auto path = config_path();
-    std::filesystem::create_directories(path.parent_path());
-    auto out = std::ofstream{path};
-    if (!out) {
-        throw std::runtime_error(
-            std::format("cannot write config file: {}", path.string()));
-    }
-
-    out << "[defaults]\n";
-    for (auto const& [k, v] : config.common)
-        out << std::format("{} = \"{}\"\n", k, v);
-
-    for (auto const& [plat, tools] : config.platforms) {
-        if (tools.empty()) continue;
-        out << std::format("\n[defaults.{}]\n", plat);
-        for (auto const& [k, v] : tools)
-            out << std::format("{} = \"{}\"\n", k, v);
-    }
+    write_document(config_path(), "defaults", config);
 }
 
 } // namespace config

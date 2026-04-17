@@ -54,6 +54,9 @@ target_sources(intron
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${INTRON_SOURCE_DIR} FILES
     ${INTRON_SOURCE_DIR}/src/config.cppm
     ${INTRON_SOURCE_DIR}/src/installer.cppm
+    ${INTRON_SOURCE_DIR}/src/intron.app.cppm
+    ${INTRON_SOURCE_DIR}/src/intron.domain.cppm
+    ${INTRON_SOURCE_DIR}/src/intron.edge.cppm
     ${INTRON_SOURCE_DIR}/src/net.cppm
     ${INTRON_SOURCE_DIR}/src/registry.cppm
 )

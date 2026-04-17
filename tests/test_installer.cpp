@@ -2,6 +2,7 @@
 
 import std;
 import cppx.http;
+import intron.domain;
 import installer;
 import net;
 
@@ -16,11 +17,16 @@ void check(bool cond, std::string_view msg) {
 
 void test_toolchain_path() {
     auto path = installer::toolchain_path("llvm", "22.1.2");
-    auto str = path.string();
     check(path.generic_string().contains(".intron/toolchains/llvm/22.1.2"), "llvm toolchain path");
 
     auto path2 = installer::toolchain_path("ninja", "1.12.1");
     check(path2.generic_string().contains(".intron/toolchains/ninja/1.12.1"), "ninja toolchain path");
+
+    auto pure_home = installer::intron_home_path("/tmp/home");
+    auto pure_path = installer::toolchain_path(pure_home, "llvm", "22.1.2");
+    check(pure_home.generic_string() == "/tmp/home/.intron", "pure intron home path");
+    check(pure_path.generic_string() == "/tmp/home/.intron/toolchains/llvm/22.1.2",
+          "pure toolchain path");
 }
 
 void test_intron_home() {
@@ -123,6 +129,15 @@ void test_selected_backend_from_env() {
           "invalid backend falls back to auto");
 }
 
+void test_selected_backend_from_string() {
+    check(net::selected_backend_from_string(std::nullopt) == net::Backend::Auto,
+          "missing backend string defaults to auto");
+    check(net::selected_backend_from_string("cppx") == net::Backend::Cppx,
+          "pure backend parser handles cppx");
+    check(net::selected_backend_from_string("SHELL") == net::Backend::Shell,
+          "pure backend parser is case insensitive");
+}
+
 void test_should_fallback() {
     check(net::should_fallback(cppx::http::http_error::response_parse_failed),
           "response parse failures are retryable");
@@ -150,6 +165,25 @@ void test_msvc_helper_paths() {
           "msvc asan runtime path points at clang_rt dll");
 }
 
+void test_install_plan() {
+    auto info = registry::resolve("cmake", "4.3.1");
+    auto plan = intron::make_install_plan("/tmp/intron-home", info, true);
+
+    check(plan.home.generic_string() == "/tmp/intron-home", "install plan keeps home path");
+    check(plan.dest.generic_string().ends_with("/toolchains/cmake/4.3.1"),
+          "install plan computes destination");
+    check(plan.download.has_value(), "install plan includes download");
+    check(plan.download->use_cached_archive, "install plan carries cache flag");
+    check(plan.download->verify_checksum, "install plan tracks checksum requirement");
+    check(plan.archive_name.contains("cmake-4.3.1"), "install plan records archive name");
+
+    auto llvm_plan = intron::make_install_plan(
+        "/tmp/intron-home",
+        registry::resolve("llvm", "22.1.2"));
+    check(llvm_plan.post_install_actions.size() == 1,
+          "llvm install plan schedules post-install action");
+}
+
 void test_msvc_environment_smoke() {
 #ifdef _WIN32
     auto root = installer::msvc_path();
@@ -175,8 +209,10 @@ int main() {
     test_latest_version_from_release_json();
     test_github_api_headers();
     test_selected_backend_from_env();
+    test_selected_backend_from_string();
     test_should_fallback();
     test_msvc_helper_paths();
+    test_install_plan();
     test_msvc_environment_smoke();
 
     if (failures > 0) {

@@ -1,5 +1,6 @@
 import std;
 import config;
+import intron.domain;
 import registry;
 
 int failures = 0;
@@ -14,6 +15,34 @@ void check(bool cond, std::string_view msg) {
 void test_config_path() {
     auto path = config::config_path();
     check(path.generic_string().contains(".intron/config.toml"), "config path");
+}
+
+void test_parse_and_serialize_roundtrip() {
+    auto input = std::string_view{
+        "[toolchain]\n"
+        "cmake = \"4.3.1\"\n"
+        "ninja = \"1.13.2\"\n"
+        "\n"
+        "[toolchain.macos]\n"
+        "llvm = \"22.1.2\"\n"
+        "\n"
+        "[toolchain.windows]\n"
+        "msvc = \"latest\"\n"
+    };
+
+    auto document = config::parse_config_document(input, "toolchain");
+    check(document.common.at("cmake") == "4.3.1", "pure parse common value");
+    check(document.platforms.at("macos").at("llvm") == "22.1.2", "pure parse platform value");
+
+    auto rendered = config::serialize_config_document(document, "toolchain");
+    auto reparsed = config::parse_config_document(rendered, "toolchain");
+    check(reparsed.common == document.common, "pure serialize roundtrip common");
+    check(reparsed.platforms == document.platforms, "pure serialize roundtrip platform");
+
+    auto merged_macos = config::merge_document(document, "macos");
+    check(merged_macos.at("cmake") == "4.3.1", "merge keeps common value");
+    check(merged_macos.at("llvm") == "22.1.2", "merge overlays platform value");
+    check(!merged_macos.contains("msvc"), "merge excludes unrelated platform values");
 }
 
 void test_set_and_load_defaults() {
@@ -246,6 +275,7 @@ void test_platform_name() {
 
 int main() {
     test_config_path();
+    test_parse_and_serialize_roundtrip();
     test_set_and_load_defaults();
     test_project_config();
     test_platform_config();
