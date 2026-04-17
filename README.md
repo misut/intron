@@ -67,7 +67,7 @@ From a regular PowerShell session:
 ```powershell
 iwr -useb https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
 intron install msvc 2022
-intron default msvc 2022
+intron default msvc 2022 --platform windows
 intron env
 ```
 
@@ -100,7 +100,7 @@ When `msvc` is selected as the default toolchain on Windows, `intron env` prints
 
 ```powershell
 intron install msvc 2022
-intron default msvc 2022
+intron default msvc 2022 --platform windows
 intron env
 ```
 
@@ -137,8 +137,8 @@ intron exec -- exon test
 | `intron remove <tool> <version>` | Remove an installed toolchain |
 | `intron list` | List installed toolchains |
 | `intron which <binary>` | Print absolute path to a binary |
-| `intron default <tool> <version>` | Set global default version |
-| `intron use [tool] [version]` | Set project toolchain in `.intron.toml` |
+| `intron default <tool> <version> [--platform <name>]` | Set global default version |
+| `intron use [tool] [version] [--platform <name>]` | Set project toolchain in `.intron.toml` |
 | `intron env` | Print environment variables (`eval "$(intron env)"`) |
 | `intron exec -- <command> [args...]` | Run a command with the resolved intron environment |
 | `intron update` | Check for newer versions |
@@ -186,17 +186,29 @@ Use `intron use` to generate `.intron.toml` from current defaults:
 ```sh
 intron use                    # pin all defaults
 intron use llvm 22.1.2        # pin specific tool
+intron use msvc 2022 --platform windows
 intron install                # install all from .intron.toml
 ```
+
+For shared repositories, keep portable tools in `[toolchain]` and put platform-only
+tools under `[toolchain.<platform>]`. `intron use` without arguments preserves that
+layout when your defaults already use platform sections.
 
 This creates `.intron.toml` in the current directory:
 
 ```toml
 [toolchain]
-llvm = "22.1.2"
 cmake = "4.3.1"
 ninja = "1.13.2"
-wasi-sdk = "32"
+
+[toolchain.macos]
+llvm = "22.1.2"
+
+[toolchain.linux]
+llvm = "22.1.2"
+
+[toolchain.windows]
+msvc = "2022"
 ```
 
 Project config overrides global defaults for `which`, `env`, `list`, and `update`.
