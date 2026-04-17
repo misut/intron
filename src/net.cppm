@@ -4,6 +4,71 @@ import cppx.http;
 import cppx.http.client;
 import cppx.http.system;
 
+namespace {
+
+constexpr bool is_windows =
+#ifdef _WIN32
+    true;
+#else
+    false;
+#endif
+
+auto powershell_quote(std::string_view s) -> std::string {
+    auto out = std::string{"'"};
+    for (auto c : s) {
+        if (c == '\'')
+            out += "''";
+        else
+            out += c;
+    }
+    out += '\'';
+    return out;
+}
+
+auto download_file_windows(std::string_view url, std::filesystem::path const& path,
+                           cppx::http::headers const& extra)
+    -> std::expected<void, std::string>
+{
+    if constexpr (!is_windows) {
+        return std::unexpected("windows fallback unavailable");
+    } else {
+        std::filesystem::create_directories(path.parent_path());
+
+        auto partial = path;
+        partial += ".part";
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(partial, ec);
+
+        auto script = std::string{
+            "$ErrorActionPreference='Stop';"
+            "$ProgressPreference='SilentlyContinue';"
+            "$headers=@{};"
+        };
+        for (auto const& [name, value] : extra) {
+            script += std::format(
+                "$headers[{}]={};",
+                powershell_quote(name),
+                powershell_quote(value));
+        }
+        script += std::format(
+            "Invoke-WebRequest -UseBasicParsing -Uri {} -Headers $headers -OutFile {} "
+            "-MaximumRedirection 10;",
+            powershell_quote(url),
+            powershell_quote(path.string()));
+
+        auto cmd = std::format(
+            "powershell -NoLogo -NoProfile -NonInteractive "
+            "-ExecutionPolicy Bypass -Command \"{}\"",
+            script);
+        if (std::system(cmd.c_str()) != 0)
+            return std::unexpected("download failed: powershell fallback failed");
+        return {};
+    }
+}
+
+} // namespace
+
 export namespace net {
 
 auto user_agent_headers(std::string_view user_agent) -> cppx::http::headers {
@@ -35,6 +100,7 @@ auto download_file(std::string_view url, std::filesystem::path const& path,
     -> std::expected<void, std::string>
 {
     auto last_error = std::string{};
+    auto retryable = false;
     for (int attempt = 1; attempt <= 3; ++attempt) {
         auto client = cppx::http::client<
             cppx::http::system::stream, cppx::http::system::tls>{};
@@ -50,12 +116,12 @@ auto download_file(std::string_view url, std::filesystem::path const& path,
             "download failed: {}", cppx::http::to_string(err));
 
         // GitHub-hosted archives can fail transiently on Windows runners.
-        auto transient =
+        retryable =
             err == cppx::http::http_error::response_parse_failed ||
             err == cppx::http::http_error::connection_failed ||
             err == cppx::http::http_error::tls_failed ||
             err == cppx::http::http_error::timeout;
-        if (!transient || attempt == 3)
+        if (!retryable || attempt == 3)
             break;
 
         auto partial = path;
@@ -64,6 +130,14 @@ auto download_file(std::string_view url, std::filesystem::path const& path,
         std::filesystem::remove(path, ec);
         std::filesystem::remove(partial, ec);
         std::this_thread::sleep_for(std::chrono::milliseconds(250 * attempt));
+    }
+
+    if constexpr (is_windows) {
+        if (retryable) {
+            auto fallback = download_file_windows(url, path, extra);
+            if (fallback) return {};
+            last_error = std::format("{}; {}", last_error, fallback.error());
+        }
     }
 
     return std::unexpected(last_error);

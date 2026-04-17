@@ -1,6 +1,6 @@
 [package]
 name = "intron"
-version = "0.18.7"
+version = "0.18.8"
 description = "A toolchain manager for C++"
 authors = ["Geunryeol Park (misut)"]
 license = "MIT"
