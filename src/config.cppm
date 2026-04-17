@@ -1,22 +1,13 @@
 export module config;
 import std;
 import cppx.env.system;
+import cppx.fs;
+import cppx.fs.system;
 import intron.domain;
 import registry;
 import toml;
 
 namespace {
-
-auto read_text_file(std::filesystem::path const& path) -> std::string {
-    auto in = std::ifstream{path, std::ios::binary};
-    if (!in) {
-        throw std::runtime_error(std::format("cannot read config file: {}", path.string()));
-    }
-    return std::string{
-        std::istreambuf_iterator<char>{in},
-        std::istreambuf_iterator<char>{},
-    };
-}
 
 auto parse_document_from_table(toml::Table const& table, std::string_view section)
     -> intron::ConfigDocument
@@ -75,25 +66,25 @@ auto serialize_document_string(intron::ConfigDocument const& document,
 auto load_document(std::filesystem::path const& path, std::string_view section)
     -> intron::ConfigDocument
 {
-    if (!std::filesystem::exists(path)) {
+    if (auto text = cppx::fs::system::read_text(path)) {
+        return parse_document_string(*text, section);
+    } else if (text.error() == cppx::fs::fs_error::not_found) {
         return {};
     }
-    return parse_document_string(read_text_file(path), section);
+    throw std::runtime_error(std::format("cannot read config file: {}", path.string()));
 }
 
 auto write_document(std::filesystem::path const& path,
                     std::string_view section,
                     intron::ConfigDocument const& document) -> void
 {
-    auto parent = path.parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
-    auto out = std::ofstream{path};
-    if (!out) {
+    auto written = cppx::fs::system::write_if_changed({
+        .path = path,
+        .content = serialize_document_string(document, section),
+    });
+    if (!written) {
         throw std::runtime_error(std::format("cannot write config file: {}", path.string()));
     }
-    out << serialize_document_string(document, section);
 }
 
 } // namespace

@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.1.0
+    GIT_TAG v1.4.0
     GIT_SHALLOW ON
 )
 FetchContent_Declare(tomlcpp
@@ -64,42 +64,20 @@ set_source_files_properties(
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-        target_link_options(intron-modules PRIVATE
-            -lssl
-            -lcrypto
-        )
-    endif()
-
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-
-        target_link_options(intron-modules PRIVATE
-            -framework
-            Security
-            -Wl,-framework,CoreFoundation
-        )
-    endif()
+    target_link_options(intron-modules PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-        target_link_options(intron PRIVATE
-            -lssl
-            -lcrypto
-        )
-    endif()
-
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-
-        target_link_options(intron PRIVATE
-            -framework
-            Security
-            -Wl,-framework,CoreFoundation
-        )
-    endif()
+    target_link_options(intron PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
 
 add_executable(test-test_app)
@@ -112,22 +90,11 @@ target_link_libraries(test-test_app PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-        target_link_options(test-test_app PRIVATE
-            -lssl
-            -lcrypto
-        )
-    endif()
-
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-
-        target_link_options(test-test_app PRIVATE
-            -framework
-            Security
-            -Wl,-framework,CoreFoundation
-        )
-    endif()
+    target_link_options(test-test_app PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
 
 add_executable(test-test_config)
@@ -140,22 +107,11 @@ target_link_libraries(test-test_config PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-        target_link_options(test-test_config PRIVATE
-            -lssl
-            -lcrypto
-        )
-    endif()
-
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-
-        target_link_options(test-test_config PRIVATE
-            -framework
-            Security
-            -Wl,-framework,CoreFoundation
-        )
-    endif()
+    target_link_options(test-test_config PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
 
 add_executable(test-test_installer)
@@ -168,22 +124,11 @@ target_link_libraries(test-test_installer PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-        target_link_options(test-test_installer PRIVATE
-            -lssl
-            -lcrypto
-        )
-    endif()
-
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-
-        target_link_options(test-test_installer PRIVATE
-            -framework
-            Security
-            -Wl,-framework,CoreFoundation
-        )
-    endif()
+    target_link_options(test-test_installer PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
 
 add_executable(test-test_registry)
@@ -196,20 +141,9 @@ target_link_libraries(test-test_registry PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-        target_link_options(test-test_registry PRIVATE
-            -lssl
-            -lcrypto
-        )
-    endif()
-
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-
-        target_link_options(test-test_registry PRIVATE
-            -framework
-            Security
-            -Wl,-framework,CoreFoundation
-        )
-    endif()
+    target_link_options(test-test_registry PRIVATE
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
