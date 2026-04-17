@@ -1,6 +1,6 @@
 [package]
 name = "intron"
-version = "0.18.8"
+version = "0.18.9"
 description = "A toolchain manager for C++"
 authors = ["Geunryeol Park (misut)"]
 license = "MIT"
@@ -8,7 +8,7 @@ type = "bin"
 standard = 23
 
 [dependencies]
-"github.com/misut/cppx" = "1.0.5"
+"github.com/misut/cppx" = "1.1.0"
 "github.com/misut/tomlcpp" = "0.3.0"
 
 [target.'cfg(os = "linux")'.build]

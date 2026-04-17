@@ -10,3 +10,8 @@ name = "github.com/misut/tomlcpp"
 version = "0.3.0"
 commit = "53ddc4c4b3213f5aabc0b08829d8666e6aa86fb3"
 
+[[package]]
+name = "github.com/misut/cppx"
+version = "1.1.0"
+commit = "c34d3c55f66bad1a6a31157a3abe5ac2708b7514"
+

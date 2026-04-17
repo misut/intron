@@ -1,7 +1,6 @@
 export module net;
 import std;
 import cppx.http;
-import cppx.http.client;
 import cppx.http.system;
 
 export namespace net {
@@ -306,8 +305,7 @@ auto download_via_cppx(std::string_view url,
     };
 
     for (int attempt = 1; attempt <= 3; ++attempt) {
-        auto client = cppx::http::client<
-            cppx::http::system::stream, cppx::http::system::tls>{};
+        auto client = cppx::http::system::client{};
         auto resp = client.download_to(url, path, extra);
         if (resp) {
             if (!resp->stat.ok()) {
