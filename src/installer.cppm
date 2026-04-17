@@ -1,6 +1,14 @@
 export module installer;
 import std;
+import cppx.archive;
+import cppx.archive.system;
+import cppx.checksum;
+import cppx.checksum.system;
 import cppx.env.system;
+import cppx.fs;
+import cppx.fs.system;
+import cppx.process;
+import cppx.process.system;
 import intron.domain;
 import net;
 export import registry;
@@ -41,94 +49,34 @@ constexpr bool is_windows =
     false;
 #endif
 
-int run(std::string const& cmd) {
-    return std::system(cmd.c_str());
-}
-
 std::string user_agent() {
     return std::format("intron/{}", EXON_PKG_VERSION);
 }
 
-std::string capture(std::string const& cmd) {
-    auto tmp = std::filesystem::temp_directory_path() / "intron_capture.tmp";
-    std::string full_cmd;
-    if constexpr (is_windows) {
-        full_cmd = std::format("{} > \"{}\" 2>nul", cmd, tmp.string());
-    } else {
-        full_cmd = std::format("{} > '{}' 2>/dev/null", cmd, tmp.string());
-    }
-    if (std::system(full_cmd.c_str()) != 0) return {};
-    std::string result;
-    {
-        auto in = std::ifstream{tmp};
-        result.assign(
-            std::istreambuf_iterator<char>{in},
-            std::istreambuf_iterator<char>{});
-    } // close stream before remove (Windows blocks removing open files)
-    std::filesystem::remove(tmp);
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
-        result.pop_back();
-    }
-    return result;
+auto trim_line_endings(std::string text) -> std::string {
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+        text.pop_back();
+    return text;
 }
 
-bool check_command(std::string_view name) {
-    if constexpr (is_windows) {
-        return run(std::format("where {} >nul 2>nul", name)) == 0;
-    } else {
-        return run(std::format("command -v '{}' >/dev/null 2>&1", name)) == 0;
-    }
+auto capture_stdout(cppx::process::ProcessSpec spec) -> std::string {
+    auto result = cppx::process::system::capture(std::move(spec));
+    if (!result || result->timed_out || result->exit_code != 0)
+        return {};
+    return trim_line_endings(std::move(result->stdout_text));
 }
 
-std::string tar_command() {
-    // On Windows, use the system bsdtar directly (C:\Windows\System32\tar.exe)
-    // to avoid accidentally invoking MSYS/GNU tar from PATH, which treats
-    // Windows absolute paths like "C:\..." as remote hosts.
-    if constexpr (is_windows) {
-        auto const* sysroot = std::getenv("SystemRoot");
-        if (sysroot) {
-            auto p = std::filesystem::path{sysroot} / "System32" / "tar.exe";
-            if (std::filesystem::exists(p)) {
-                return std::format("\"{}\"", p.string());
-            }
-        }
+auto write_text_file(std::filesystem::path const& path, std::string content) -> void {
+    auto written = cppx::fs::system::write_if_changed({
+        .path = path,
+        .content = std::move(content),
+    });
+    if (!written) {
+        throw std::runtime_error(std::format(
+            "cannot write file: {} ({})",
+            path.string(),
+            cppx::fs::to_string(written.error())));
     }
-    return "tar";
-}
-
-std::string sha256_command(std::filesystem::path const& file) {
-    if constexpr (is_windows) {
-        return std::format("certutil -hashfile \"{}\" SHA256", file.string());
-    } else {
-        return std::format("shasum -a 256 '{}'", file.string());
-    }
-}
-
-std::string parse_sha256(std::string const& output) {
-    if constexpr (is_windows) {
-        // certutil output: 1st line header, 2nd line hash, 3rd line footer
-        auto first_nl = output.find('\n');
-        if (first_nl == std::string::npos) return {};
-        auto start = first_nl + 1;
-        auto end = output.find('\n', start);
-        if (end == std::string::npos) end = output.size();
-        auto hash = output.substr(start, end - start);
-        // Remove spaces
-        std::erase(hash, ' ');
-        std::erase(hash, '\r');
-        // Convert to lowercase
-        for (auto& c : hash) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return hash;
-    } else {
-        return output.substr(0, output.find(' '));
-    }
-}
-
-std::string shell_quote(std::filesystem::path const& p) {
-    if constexpr (is_windows)
-        return std::format("\"{}\"", p.string());
-    else
-        return std::format("'{}'", p.string());
 }
 
 int strip_depth(std::string_view prefix) {
@@ -139,90 +87,63 @@ int strip_depth(std::string_view prefix) {
     return depth;
 }
 
-int extract_archive(std::filesystem::path const& archive,
-                    std::filesystem::path const& staging,
-                    registry::ToolInfo const& info) {
-    int depth = strip_depth(info.strip_prefix);
-
-    if (info.archive_type == "tar.xz" || info.archive_type == "tar.gz") {
-        if constexpr (is_windows) {
-            return run(std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
-                tar_command(), archive.string(), depth, staging.string()));
-        } else {
-            return run(std::format("tar xf '{}' --strip-components={} -C '{}'",
-                archive.string(), depth, staging.string()));
-        }
-    } else if (info.archive_type == "zip") {
-        if constexpr (is_windows) {
-            return run(std::format("\"{} xf \"{}\" --strip-components={} -C \"{}\"\"",
-                tar_command(), archive.string(), depth, staging.string()));
-        } else {
-            if (depth > 0) {
-                int rc = run(std::format("unzip -qo '{}' -d '{}'",
-                    archive.string(), staging.string()));
-                if (rc == 0) {
-                    auto inner = staging / info.strip_prefix;
-                    auto tmp = staging.parent_path() / (staging.filename().string() + ".tmp");
-                    std::filesystem::rename(inner, tmp);
-                    std::filesystem::remove_all(staging);
-                    std::filesystem::rename(tmp, staging);
-                }
-                return rc;
-            } else {
-                return run(std::format("unzip -qo '{}' -d '{}'",
-                    archive.string(), staging.string()));
-            }
-        }
+auto extract_archive(std::filesystem::path const& archive,
+                     std::filesystem::path const& staging,
+                     registry::ToolInfo const& info)
+    -> std::expected<void, std::string> {
+    auto format = cppx::archive::archive_format_from_string(info.archive_type);
+    if (!format) {
+        return std::unexpected(std::format(
+            "unknown archive type: {}",
+            info.archive_type));
     }
-    return 1; // unknown archive type
+
+    auto extracted = cppx::archive::system::extract({
+        .archive_path = archive,
+        .destination_dir = staging,
+        .format = *format,
+        .strip_components = strip_depth(info.strip_prefix),
+    });
+    if (!extracted)
+        return std::unexpected(extracted.error().message);
+    return {};
 }
 
 bool verify_checksum(std::filesystem::path const& archive,
                      std::string_view archive_name,
-                     std::filesystem::path const& downloads,
                      std::string const& checksum_url) {
-    auto checksum_file = downloads / "checksums.txt";
-    auto dl = net::download_file(
-        checksum_url, checksum_file, net::user_agent_headers(user_agent()));
-    if (!dl) {
+    auto manifest = net::get_text(
+        checksum_url, net::user_agent_headers(user_agent()));
+    if (!manifest) {
         std::println(
             "warning: could not download checksum file ({}), skipping verification",
-            dl.error());
+            manifest.error());
         return true;
     }
 
-    auto raw = capture(sha256_command(archive));
-    auto actual_hash = parse_sha256(raw);
-
-    bool verified = false;
-    bool mismatch = false;
-    std::string expected_hash;
-    {
-        auto in = std::ifstream{checksum_file};
-        std::string line;
-        while (std::getline(in, line)) {
-            if (line.contains(archive_name)) {
-                expected_hash = line.substr(0, line.find(' '));
-                if (actual_hash == expected_hash)
-                    verified = true;
-                else
-                    mismatch = true;
-                break;
-            }
-        }
+    auto expected_hash = cppx::checksum::find_sha256_for_filename(
+        *manifest, archive_name);
+    if (!expected_hash) {
+        std::println("warning: checksum entry not found, skipping verification");
+        return true;
     }
-    std::filesystem::remove(checksum_file);
 
-    if (mismatch) {
-        std::println(std::cerr,
-            "error: checksum mismatch\n  expected: {}\n  actual:   {}",
-            expected_hash, actual_hash);
+    auto actual_hash = cppx::checksum::system::sha256_file(archive);
+    if (!actual_hash) {
+        std::println(
+            std::cerr,
+            "error: could not calculate checksum: {}",
+            actual_hash.error().message);
         return false;
     }
-    if (verified)
-        std::println("Checksum OK");
-    else
-        std::println("warning: checksum entry not found, skipping verification");
+
+    if (*actual_hash != *expected_hash) {
+        std::println(std::cerr,
+            "error: checksum mismatch\n  expected: {}\n  actual:   {}",
+            *expected_hash, *actual_hash);
+        return false;
+    }
+    std::println("Checksum OK");
     return true;
 }
 
@@ -233,12 +154,12 @@ void write_clang_wrapper(std::filesystem::path const& bin_dir,
         auto backup = bin_dir / std::format("{}.orig", name);
         if (std::filesystem::exists(orig) && !std::filesystem::exists(backup)) {
             std::filesystem::rename(orig, backup);
-            auto out = std::ofstream{orig};
-            if (out) {
-                out << "#!/bin/sh\n";
-                out << std::format("exec \"{}\" {} \"$@\"\n",
-                    backup.string(), cfg_flag);
-            }
+            write_text_file(
+                orig,
+                std::format(
+                    "#!/bin/sh\nexec \"{}\" {} \"$@\"\n",
+                    backup.string(),
+                    cfg_flag));
             std::filesystem::permissions(orig,
                 std::filesystem::perms::owner_exec |
                 std::filesystem::perms::group_exec |
@@ -251,10 +172,16 @@ void write_clang_wrapper(std::filesystem::path const& bin_dir,
 void setup_llvm_config(std::filesystem::path const& dest, std::string_view /*version*/) {
     auto plat = registry::detect_platform();
     auto clang = dest / "bin" / "clang";
-    auto target = capture(std::format("'{}' -dumpmachine", clang.string()));
+    auto target = capture_stdout({
+        .program = clang.string(),
+        .args = {"-dumpmachine"},
+    });
 
     if (plat.os == registry::OS::macOS) {
-        auto sdk_path = capture("xcrun --show-sdk-path");
+        auto sdk_path = capture_stdout({
+            .program = "xcrun",
+            .args = {"--show-sdk-path"},
+        });
         if (!target.empty() && !sdk_path.empty()) {
             auto cfg_target = target;
             auto darwin_pos = cfg_target.find("darwin");
@@ -268,14 +195,13 @@ void setup_llvm_config(std::filesystem::path const& dest, std::string_view /*ver
             auto cfg_dir = dest / "etc" / "clang";
             std::filesystem::create_directories(cfg_dir);
             auto cfg_file = cfg_dir / std::format("{}.cfg", cfg_target);
-            {
-                auto out = std::ofstream{cfg_file};
-                if (out) {
-                    out << std::format("-isysroot {}\n", sdk_path);
-                    out << "-stdlib=libc++\n";
-                    out << "-lc++\n";
-                }
-            }
+            write_text_file(
+                cfg_file,
+                std::format(
+                    "-isysroot {}\n"
+                    "-stdlib=libc++\n"
+                    "-lc++\n",
+                    sdk_path));
 
             write_clang_wrapper(dest / "bin",
                 std::format("--config-system-dir={}", cfg_dir.string()));
@@ -290,16 +216,16 @@ void setup_llvm_config(std::filesystem::path const& dest, std::string_view /*ver
         auto cfg_dir = dest / "etc" / "clang";
         std::filesystem::create_directories(cfg_dir);
         auto cfg_file = cfg_dir / std::format("{}.cfg", target);
-        {
-            auto out = std::ofstream{cfg_file};
-            if (out) {
-                out << "-stdlib=libc++\n";
-                out << "-lc++\n";
-                out << "-lc++abi\n";
-                out << std::format("-L{}\n", lib_dir.string());
-                out << std::format("-Wl,-rpath,{}\n", lib_dir.string());
-            }
-        }
+        write_text_file(
+            cfg_file,
+            std::format(
+                "-stdlib=libc++\n"
+                "-lc++\n"
+                "-lc++abi\n"
+                "-L{}\n"
+                "-Wl,-rpath,{}\n",
+                lib_dir.string(),
+                lib_dir.string()));
 
         write_clang_wrapper(dest / "bin",
             std::format("--config-system-dir={}", cfg_dir.string()));
@@ -321,13 +247,11 @@ bool verify_installed_binary(std::filesystem::path const& dest, registry::ToolIn
     if (!std::filesystem::exists(verify_bin))
         return true;
 
-    auto cmd = std::format("{} --version", shell_quote(verify_bin));
-    std::string redirect;
-    if constexpr (is_windows)
-        redirect = " > NUL 2>&1";
-    else
-        redirect = " > /dev/null 2>&1";
-    if (run(cmd + redirect) != 0) {
+    auto result = cppx::process::system::capture({
+        .program = verify_bin.string(),
+        .args = {"--version"},
+    });
+    if (!result || result->timed_out || result->exit_code != 0) {
         std::println(std::cerr,
             "error: {} binary is not executable on this platform\n"
             "hint: the downloaded binary may not match your architecture",
@@ -389,19 +313,28 @@ std::optional<std::filesystem::path> detect_msvc_path() {
         auto vswhere = std::filesystem::path{pf86}
             / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
         if (std::filesystem::exists(vswhere))
-            vswhere_cmd = std::format("\"{}\"", vswhere.string());
+            vswhere_cmd = vswhere.string();
     }
     if (vswhere_cmd.empty()) {
         // Try PATH
-        if (check_command("vswhere"))
-            vswhere_cmd = "vswhere";
+        if (auto found = cppx::env::system::find_in_path("vswhere"))
+            vswhere_cmd = found->string();
         else
             return std::nullopt;
     }
 
-    auto install_path = capture(
-        std::format("{} -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath",
-            vswhere_cmd));
+    auto install_path = capture_stdout({
+        .program = vswhere_cmd,
+        .args = {
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        },
+    });
     if (!install_path.empty()) {
         // Find the latest MSVC toolset version
         auto vc_tools = std::filesystem::path{install_path} / "VC" / "Tools" / "MSVC";
@@ -477,22 +410,18 @@ std::optional<std::map<std::string, std::string>> capture_msvc_environment(
     if (!std::filesystem::exists(vcvars))
         return std::nullopt;
 
-    auto tmp = std::filesystem::temp_directory_path() / "intron_msvc_env.txt";
-    auto cmd = std::format(
-        "call \"{}\" >nul && set > \"{}\" 2>nul",
-        vcvars.string(),
-        tmp.string());
-    if (std::system(cmd.c_str()) != 0)
+    auto captured = cppx::process::system::capture({
+        .program = "cmd",
+        .args = {
+            "/d",
+            "/c",
+            std::format("call \"{}\" >nul && set", vcvars.string()),
+        },
+    });
+    if (!captured || captured->timed_out || captured->exit_code != 0)
         return std::nullopt;
 
-    std::string env_text;
-    {
-        auto in = std::ifstream{tmp};
-        env_text.assign(
-            std::istreambuf_iterator<char>{in},
-            std::istreambuf_iterator<char>{});
-    }
-    std::filesystem::remove(tmp);
+    auto env_text = trim_line_endings(std::move(captured->stdout_text));
     if (env_text.empty())
         return std::nullopt;
     return parse_environment_block(env_text);
@@ -572,18 +501,6 @@ bool install(registry::ToolInfo const& info) {
         return true;
     }
 
-    if ((info.archive_type == "tar.xz" || info.archive_type == "tar.gz")
-        && !detail::check_command("tar")) {
-        std::println(std::cerr, "error: tar is required but not found");
-        return false;
-    }
-    if constexpr (!detail::is_windows) {
-        if (info.archive_type == "zip" && !detail::check_command("unzip")) {
-            std::println(std::cerr, "error: unzip is required but not found");
-            return false;
-        }
-    }
-
     if (!plan.download) {
         std::println(std::cerr, "error: missing download plan for {}", info.name);
         return false;
@@ -624,7 +541,6 @@ bool install(registry::ToolInfo const& info) {
         if (!detail::verify_checksum(
                 archive_path,
                 archive_name,
-                downloads,
                 plan.download->checksum_url)) {
             cleanup();
             return false;
@@ -636,15 +552,9 @@ bool install(registry::ToolInfo const& info) {
     std::filesystem::create_directories(staging);
 
     std::println("Extracting...");
-    if (info.archive_type != "tar.xz" && info.archive_type != "tar.gz" &&
-        info.archive_type != "zip") {
-        std::println(std::cerr, "error: unknown archive type: {}", info.archive_type);
-        std::filesystem::remove_all(staging);
-        cleanup();
-        return false;
-    }
-    if (detail::extract_archive(archive_path, staging, info) != 0) {
-        std::println(std::cerr, "error: extraction failed");
+    auto extracted = detail::extract_archive(archive_path, staging, info);
+    if (!extracted) {
+        std::println(std::cerr, "error: extraction failed: {}", extracted.error());
         std::filesystem::remove_all(staging);
         cleanup();
         return false;

@@ -1,4 +1,6 @@
 import std;
+import cppx.archive;
+import cppx.archive.system;
 import intron.app;
 import intron.domain;
 import intron.edge;
@@ -66,26 +68,17 @@ auto self_update_result(std::string_view self_path) -> intron::CommandResult {
         return result;
     }
 
-#ifdef _WIN32
-    std::string tar = "tar";
-    if (auto const* sr = std::getenv("SystemRoot")) {
-        auto sys_tar = std::filesystem::path{sr} / "System32" / "tar.exe";
-        if (std::filesystem::exists(sys_tar)) {
-            tar = std::format("\"{}\"", sys_tar.string());
-        }
-    }
-    auto extract_cmd = std::format(
-        "\"{} xf \"{}\" -C \"{}\"\"",
-        tar,
-        archive.string(),
-        tmp.string());
-#else
-    auto extract_cmd = std::format("tar xzf '{}' -C '{}'", archive.string(), tmp.string());
-#endif
-
-    if (std::system(extract_cmd.c_str()) != 0) {
+    auto format = is_windows
+        ? cppx::archive::ArchiveFormat::Zip
+        : cppx::archive::ArchiveFormat::TarGz;
+    auto extracted = cppx::archive::system::extract({
+        .archive_path = archive,
+        .destination_dir = tmp,
+        .format = format,
+    });
+    if (!extracted) {
         result.exit_code = 1;
-        result.add_stderr("error: extraction failed");
+        result.add_stderr(std::format("error: extraction failed: {}", extracted.error().message));
         std::filesystem::remove_all(tmp);
         return result;
     }

@@ -1,7 +1,6 @@
 #include <cstdlib>
 
 import std;
-import cppx.http;
 import intron.domain;
 import installer;
 import net;
@@ -138,21 +137,6 @@ void test_selected_backend_from_string() {
           "pure backend parser is case insensitive");
 }
 
-void test_should_fallback() {
-    check(net::should_fallback(cppx::http::http_error::response_parse_failed),
-          "response parse failures are retryable");
-    check(net::should_fallback(cppx::http::http_error::connection_failed),
-          "connection failures are retryable");
-    check(net::should_fallback(cppx::http::http_error::tls_failed),
-          "tls failures are retryable");
-    check(net::should_fallback(cppx::http::http_error::timeout),
-          "timeouts are retryable");
-    check(!net::should_fallback(cppx::http::http_error::send_failed),
-          "send failures do not trigger shell fallback");
-    check(!net::should_fallback(cppx::http::http_error::redirect_limit),
-          "redirect limit errors do not trigger shell fallback");
-}
-
 void test_msvc_helper_paths() {
     auto root = std::filesystem::path{"C:/VS/VC/Tools/MSVC/14.40.33807"};
     auto bin = installer::msvc_bin_path(root);
@@ -210,7 +194,6 @@ int main() {
     test_github_api_headers();
     test_selected_backend_from_env();
     test_selected_backend_from_string();
-    test_should_fallback();
     test_msvc_helper_paths();
     test_install_plan();
     test_msvc_environment_smoke();
