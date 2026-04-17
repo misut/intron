@@ -447,13 +447,6 @@ std::optional<std::map<std::string, std::string>> current_msvc_environment(
     else if (auto path_upper = std::getenv("PATH"); path_upper && *path_upper)
         env["Path"] = path_upper;
 
-    auto vctools = std::getenv("VCToolsInstallDir");
-    if (vctools && *vctools) {
-        auto normalized = std::filesystem::path{vctools}.lexically_normal();
-        if (normalized != root.lexically_normal())
-            return std::nullopt;
-    }
-
     return env;
 }
 
