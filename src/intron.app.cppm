@@ -79,6 +79,73 @@ auto add_config_write_notice(intron::CommandResult& result) -> void {
     result.add_stdout("wrote .intron.toml");
 }
 
+auto platform_values(intron::ConfigDocument const& document, std::string_view platform)
+    -> std::map<std::string, std::string>
+{
+    if (auto it = document.platforms.find(std::string{platform}); it != document.platforms.end()) {
+        return it->second;
+    }
+    return {};
+}
+
+auto merged_values(std::map<std::string, std::string> const& base,
+                   std::map<std::string, std::string> const& override)
+    -> std::map<std::string, std::string>
+{
+    auto merged = base;
+    for (auto const& [tool, version] : override) {
+        merged[tool] = version;
+    }
+    return merged;
+}
+
+auto normalize_versions(std::map<std::string, std::string>& values) -> void {
+    for (auto& [tool, version] : values) {
+        version = registry::normalize_requested_version(tool, version);
+    }
+}
+
+auto set_platform_values(intron::ConfigDocument& document,
+                         std::string_view platform,
+                         std::map<std::string, std::string> values) -> void
+{
+    auto key = std::string{platform};
+    if (values.empty()) {
+        document.platforms.erase(key);
+        return;
+    }
+    document.platforms[key] = std::move(values);
+}
+
+auto apply_current_defaults(intron::ConfigDocument& document)
+    -> std::pair<std::map<std::string, std::string>, std::map<std::string, std::string>>
+{
+    auto const platform = std::string{registry::platform_name()};
+    auto defaults = config::load_full_defaults();
+
+    auto common = merged_values(defaults.common, document.common);
+    auto current_platform_values = merged_values(
+        platform_values(defaults, platform),
+        platform_values(document, platform));
+
+    normalize_versions(common);
+    normalize_versions(current_platform_values);
+
+    for (auto it = common.begin(); it != common.end();) {
+        if (registry::is_system_tool(it->first)) {
+            current_platform_values.try_emplace(it->first, it->second);
+            it = common.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    document.common = common;
+    set_platform_values(document, platform, current_platform_values);
+
+    return {std::move(common), std::move(current_platform_values)};
+}
+
 auto cmd_install(intron::CommandRequest const& request) -> intron::CommandResult {
     auto result = intron::CommandResult{};
     if (request.args.size() < 2) {
@@ -237,17 +304,23 @@ auto cmd_use(intron::CommandRequest const& request,
 
     auto document = config::load_full_project_config();
     if (parsed->positional.empty()) {
-        auto defaults = config::load_effective_defaults();
-        if (defaults.empty()) {
+        auto [common, current_platform_values] = apply_current_defaults(document);
+        if (common.empty() && current_platform_values.empty()) {
             result.exit_code = 1;
             result.add_stderr("error: no default versions set");
             result.add_stderr("hint: run 'intron default <tool> <version>' first");
             return result;
         }
-        for (auto const& [tool, version] : defaults) {
-            auto normalized_version = registry::normalize_requested_version(tool, version);
-            document.common[tool] = normalized_version;
-            result.add_stdout(std::format("set {} {}", tool, normalized_version));
+        for (auto const& [tool, version] : common) {
+            result.add_stdout(std::format("set {} {}", tool, version));
+        }
+        auto current_platform = std::string{registry::platform_name()};
+        for (auto const& [tool, version] : current_platform_values) {
+            result.add_stdout(std::format(
+                "set {} {} (platform: {})",
+                tool,
+                version,
+                current_platform));
         }
     } else {
         auto tool = parsed->positional[0];

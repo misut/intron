@@ -2,7 +2,9 @@
 
 import std;
 import intron.app;
+import config;
 import intron.domain;
+import registry;
 
 int failures = 0;
 
@@ -53,6 +55,14 @@ struct EnvGuard {
     std::optional<std::string> original;
 };
 
+auto path_separator() -> std::string_view {
+#ifdef _WIN32
+    return ";";
+#else
+    return ":";
+#endif
+}
+
 struct CurrentPathGuard {
     CurrentPathGuard()
         : original(std::filesystem::current_path())
@@ -92,7 +102,6 @@ void write_text_file(std::filesystem::path const& path, std::string_view text) {
 void write_empty_file(std::filesystem::path const& path) {
     write_text_file(path, "");
 }
-
 void test_parse_without_command() {
     auto argv0 = std::array{const_cast<char*>("intron")};
     auto parsed = intron::app::parse_command_request(
@@ -247,7 +256,10 @@ void test_env_materialization() {
         std::optional<std::filesystem::path>{"/tool/wasi"});
     auto overrides = intron::materialize_env_overrides(plan, {{"PATH", "/usr/bin"}});
 
-    check(overrides.at("PATH") == "/tool/bin:/other/bin:/usr/bin",
+    check(overrides.at("PATH") == std::format(
+              "/tool/bin:/other/bin{}{}",
+              path_separator(),
+              "/usr/bin"),
           "env materialization appends inherited PATH");
     check(overrides.at("CC") == "/tool/bin/clang", "env materialization keeps CC");
     check(overrides.at("CXX") == "/tool/bin/clang++", "env materialization keeps CXX");
@@ -296,8 +308,15 @@ void test_exec_run_command_uses_resolved_env() {
         project / ".intron.toml",
         "[toolchain]\n"
         "cmake = \"9.9.9\"\n");
-    write_empty_file(llvm_bin / "clang");
-    write_empty_file(llvm_bin / "clang++");
+#ifdef _WIN32
+    auto const llvm_cc = llvm_bin / "clang-cl.exe";
+    auto const llvm_cxx = llvm_cc;
+#else
+    auto const llvm_cc = llvm_bin / "clang";
+    auto const llvm_cxx = llvm_bin / "clang++";
+#endif
+    write_empty_file(llvm_cc);
+    write_empty_file(llvm_cxx);
     write_empty_file(cmake_bin / "cmake");
     std::filesystem::create_directories(wasi_root);
 
@@ -343,17 +362,130 @@ void test_exec_run_command_uses_resolved_env() {
         check(captured->argv == std::vector<std::string>{"cmake", "--version"},
               "exec forwards child argv without separator");
         check(captured->env_overrides.at("PATH") == std::format(
-                  "{}:{}:/usr/bin",
+                  "{}{}{}{}{}",
                   cmake_bin.string(),
-                  llvm_bin.string()),
+                  path_separator(),
+                  llvm_bin.string(),
+                  path_separator(),
+                  "/usr/bin"),
               "exec forwards resolved PATH override");
-        check(captured->env_overrides.at("CC") == (llvm_bin / "clang").string(),
+        check(captured->env_overrides.at("CC") == llvm_cc.string(),
               "exec forwards resolved CC override");
-        check(captured->env_overrides.at("CXX") == (llvm_bin / "clang++").string(),
+        check(captured->env_overrides.at("CXX") == llvm_cxx.string(),
               "exec forwards resolved CXX override");
         check(captured->env_overrides.at("WASI_SDK_PATH") == wasi_root.string(),
               "exec forwards resolved WASI_SDK_PATH override");
     }
+}
+
+void test_use_without_args_preserves_platform_specific_defaults() {
+    auto const tmp = std::filesystem::temp_directory_path() /
+                     "intron_test_use_platform_defaults";
+    auto const home = tmp / "home";
+    auto const project = tmp / "project";
+    std::filesystem::remove_all(tmp);
+    std::filesystem::create_directories(home / ".intron");
+    std::filesystem::create_directories(project);
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    set_env("HOME", home.string());
+    set_env("USERPROFILE", home.string());
+
+    auto const saved_cwd = std::filesystem::current_path();
+    std::filesystem::current_path(project);
+
+    try {
+        auto const platform = std::string{registry::platform_name()};
+        auto const platform_tool = platform == "windows" ? "msvc" : "llvm";
+        auto const platform_version = platform == "windows" ? "2022" : "22.1.2";
+
+        config::set_default("cmake", "4.3.1");
+        config::set_default(platform_tool, platform_version, platform);
+
+        auto request = intron::CommandRequest{
+            .command = intron::CommandKind::Use,
+            .raw_command = "use",
+        };
+        auto result = intron::app::run_command(request, {});
+
+        check(result.exit_code == 0, "use without args succeeds");
+        auto full = config::load_full_project_config();
+        check(full.common.contains("cmake"), "use without args writes common defaults");
+        check(full.common.at("cmake") == "4.3.1", "use without args keeps common version");
+        check(!full.common.contains(platform_tool),
+              "use without args keeps platform-only tool out of common section");
+        check(full.platforms.contains(platform), "use without args writes current platform section");
+        check(full.platforms.at(platform).contains(platform_tool),
+              "use without args writes current platform tool");
+        check(full.platforms.at(platform).at(platform_tool) == platform_version,
+              "use without args writes current platform version");
+
+        auto project_text = std::string{};
+        {
+            auto input = std::ifstream{project / ".intron.toml"};
+            project_text.assign(
+                std::istreambuf_iterator<char>{input},
+                std::istreambuf_iterator<char>{});
+        }
+        check(project_text.contains(std::format("[toolchain.{}]", platform)),
+              "use without args renders platform section");
+    } catch (...) {
+        std::filesystem::current_path(saved_cwd);
+        std::filesystem::remove_all(tmp);
+        throw;
+    }
+
+    std::filesystem::current_path(saved_cwd);
+    std::filesystem::remove_all(tmp);
+}
+
+void test_use_without_args_keeps_common_and_platform_override() {
+    auto const tmp = std::filesystem::temp_directory_path() /
+                     "intron_test_use_common_and_platform_override";
+    auto const home = tmp / "home";
+    auto const project = tmp / "project";
+    std::filesystem::remove_all(tmp);
+    std::filesystem::create_directories(home / ".intron");
+    std::filesystem::create_directories(project);
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    set_env("HOME", home.string());
+    set_env("USERPROFILE", home.string());
+
+    auto const saved_cwd = std::filesystem::current_path();
+    std::filesystem::current_path(project);
+
+    try {
+        auto const platform = std::string{registry::platform_name()};
+
+        config::set_default("llvm", "21.0.0");
+        config::set_default("llvm", "22.1.2", platform);
+
+        auto request = intron::CommandRequest{
+            .command = intron::CommandKind::Use,
+            .raw_command = "use",
+        };
+        auto result = intron::app::run_command(request, {});
+
+        check(result.exit_code == 0, "use without args succeeds for common plus platform override");
+        auto full = config::load_full_project_config();
+        check(full.common.contains("llvm"), "use without args keeps common tool baseline");
+        check(full.common.at("llvm") == "21.0.0", "use without args keeps common tool version");
+        check(full.platforms.contains(platform), "use without args keeps current platform override section");
+        check(full.platforms.at(platform).contains("llvm"),
+              "use without args keeps current platform override tool");
+        check(full.platforms.at(platform).at("llvm") == "22.1.2",
+              "use without args keeps current platform override version");
+    } catch (...) {
+        std::filesystem::current_path(saved_cwd);
+        std::filesystem::remove_all(tmp);
+        throw;
+    }
+
+    std::filesystem::current_path(saved_cwd);
+    std::filesystem::remove_all(tmp);
 }
 
 int main() {
@@ -369,6 +501,8 @@ int main() {
     test_env_materialization();
     test_exec_usage_error();
     test_exec_run_command_uses_resolved_env();
+    test_use_without_args_preserves_platform_specific_defaults();
+    test_use_without_args_keeps_common_and_platform_override();
 
     if (failures > 0) {
         std::println(std::cerr, "{} test(s) failed", failures);
