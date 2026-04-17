@@ -55,6 +55,14 @@ struct EnvGuard {
     std::optional<std::string> original;
 };
 
+auto path_separator() -> std::string_view {
+#ifdef _WIN32
+    return ";";
+#else
+    return ":";
+#endif
+}
+
 struct CurrentPathGuard {
     CurrentPathGuard()
         : original(std::filesystem::current_path())
@@ -248,7 +256,10 @@ void test_env_materialization() {
         std::optional<std::filesystem::path>{"/tool/wasi"});
     auto overrides = intron::materialize_env_overrides(plan, {{"PATH", "/usr/bin"}});
 
-    check(overrides.at("PATH") == "/tool/bin:/other/bin:/usr/bin",
+    check(overrides.at("PATH") == std::format(
+              "/tool/bin:/other/bin{}{}",
+              path_separator(),
+              "/usr/bin"),
           "env materialization appends inherited PATH");
     check(overrides.at("CC") == "/tool/bin/clang", "env materialization keeps CC");
     check(overrides.at("CXX") == "/tool/bin/clang++", "env materialization keeps CXX");
@@ -297,8 +308,15 @@ void test_exec_run_command_uses_resolved_env() {
         project / ".intron.toml",
         "[toolchain]\n"
         "cmake = \"9.9.9\"\n");
-    write_empty_file(llvm_bin / "clang");
-    write_empty_file(llvm_bin / "clang++");
+#ifdef _WIN32
+    auto const llvm_cc = llvm_bin / "clang-cl.exe";
+    auto const llvm_cxx = llvm_cc;
+#else
+    auto const llvm_cc = llvm_bin / "clang";
+    auto const llvm_cxx = llvm_bin / "clang++";
+#endif
+    write_empty_file(llvm_cc);
+    write_empty_file(llvm_cxx);
     write_empty_file(cmake_bin / "cmake");
     std::filesystem::create_directories(wasi_root);
 
@@ -344,13 +362,16 @@ void test_exec_run_command_uses_resolved_env() {
         check(captured->argv == std::vector<std::string>{"cmake", "--version"},
               "exec forwards child argv without separator");
         check(captured->env_overrides.at("PATH") == std::format(
-                  "{}:{}:/usr/bin",
+                  "{}{}{}{}{}",
                   cmake_bin.string(),
-                  llvm_bin.string()),
+                  path_separator(),
+                  llvm_bin.string(),
+                  path_separator(),
+                  "/usr/bin"),
               "exec forwards resolved PATH override");
-        check(captured->env_overrides.at("CC") == (llvm_bin / "clang").string(),
+        check(captured->env_overrides.at("CC") == llvm_cc.string(),
               "exec forwards resolved CC override");
-        check(captured->env_overrides.at("CXX") == (llvm_bin / "clang++").string(),
+        check(captured->env_overrides.at("CXX") == llvm_cxx.string(),
               "exec forwards resolved CXX override");
         check(captured->env_overrides.at("WASI_SDK_PATH") == wasi_root.string(),
               "exec forwards resolved WASI_SDK_PATH override");
