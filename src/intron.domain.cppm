@@ -41,6 +41,7 @@ enum class CommandKind {
     Update,
     Upgrade,
     Env,
+    Exec,
     SelfUpdate,
     Help,
 };
@@ -115,7 +116,13 @@ struct FilesystemPort {
 struct HttpClientPort {
 };
 
+struct ProcessRunRequest {
+    std::vector<std::string> argv;
+    std::map<std::string, std::string> env_overrides;
+};
+
 struct ProcessRunnerPort {
+    std::function<std::expected<int, std::string>(ProcessRunRequest const&)> run;
 };
 
 struct EnvironmentPort {
@@ -201,6 +208,21 @@ inline auto split_platform_args(std::vector<std::string> const& args)
     return result;
 }
 
+inline auto parse_exec_args(std::vector<std::string> const& args)
+    -> std::expected<std::vector<std::string>, std::string>
+{
+    if (args.empty()) {
+        return std::unexpected("missing '--' separator before command");
+    }
+    if (args.front() != "--") {
+        return std::unexpected("expected '--' separator before command");
+    }
+    if (args.size() == 1) {
+        return std::unexpected("missing command after '--'");
+    }
+    return std::vector<std::string>{args.begin() + 1, args.end()};
+}
+
 inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
     return {
         std::format("intron {}", version),
@@ -217,6 +239,7 @@ inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
         "  update                                 Check for updates",
         "  upgrade [tool]                         Upgrade tools to latest",
         "  env                                    Print environment variables",
+        "  exec    -- <command> [args...]         Run a command with intron environment",
         "  self-update                            Update intron itself",
         "  help                                   Show this message",
         "",
@@ -395,6 +418,61 @@ inline auto render_env_lines(EnvPlan const& plan, bool is_windows)
         }
     }
     return lines;
+}
+
+inline auto find_env_value(
+    std::map<std::string, std::string> const& env,
+    std::string_view key) -> std::optional<std::string>
+{
+#ifdef _WIN32
+    auto equals_key = [key](std::string const& candidate) {
+        if (candidate.size() != key.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < candidate.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(candidate[i])) !=
+                std::tolower(static_cast<unsigned char>(key[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto it = std::ranges::find_if(env, [&](auto const& entry) {
+        return equals_key(entry.first);
+    });
+    if (it != env.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+#else
+    auto it = env.find(std::string{key});
+    if (it != env.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+#endif
+}
+
+inline auto materialize_env_overrides(
+    EnvPlan const& plan,
+    std::map<std::string, std::string> const& inherited_env) -> std::map<std::string, std::string>
+{
+    auto overrides = std::map<std::string, std::string>{};
+    for (auto const& assignment : plan.assignments) {
+        auto value = assignment.value;
+        if (assignment.append_existing) {
+            if (auto inherited = find_env_value(inherited_env, assignment.key);
+                inherited && !inherited->empty()) {
+#ifdef _WIN32
+                value += std::format(";{}", *inherited);
+#else
+                value += std::format(":{}", *inherited);
+#endif
+            }
+        }
+        overrides[assignment.key] = std::move(value);
+    }
+    return overrides;
 }
 
 inline auto make_install_plan(
