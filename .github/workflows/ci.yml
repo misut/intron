@@ -165,6 +165,14 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Configure unit tests
+        run: cmake -G Ninja -S . -B test-build
+
+      - name: Build unit tests
+        run: >
+          cmake --build test-build
+          --target test-test_app test-test_config test-test_installer test-test_registry
+
       - name: Run unit tests
         shell: pwsh
         run: |
@@ -174,7 +182,7 @@ jobs:
             'test-test_installer.exe',
             'test-test_registry.exe'
           )) {
-            $path = Join-Path $PWD "build\\$test"
+            $path = Join-Path $PWD "test-build\\$test"
             if (-not (Test-Path $path)) {
               throw "missing expected test binary: $path"
             }
