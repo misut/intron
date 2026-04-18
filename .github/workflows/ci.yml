@@ -77,14 +77,8 @@ jobs:
       - name: Build and test
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            llvm_bin="$(dirname "$(intron which clang)")"
-            cmake_bin="$(dirname "$(intron which cmake)")"
-            ninja_bin="$(dirname "$(intron which ninja)")"
-            export PATH="$llvm_bin:$cmake_bin:$ninja_bin:$PATH"
-            export CC=clang
-            export CXX=clang++
-            ./.exon-ci build
-            ./.exon-ci test
+            intron exec -- ./.exon-ci build
+            intron exec -- ./.exon-ci test
           else
             export PATH="/usr/lib/llvm-20/bin:$PATH"
             exon build
