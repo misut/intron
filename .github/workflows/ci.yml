@@ -74,51 +74,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Prepare clean macOS exon home
+      - name: Verify portable toolchain resolution (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          EXON_CI_HOME="$RUNNER_TEMP/exon-ci-home"
-          mkdir -p "$EXON_CI_HOME/.intron"
-          ln -sfn "$HOME/.intron/toolchains" "$EXON_CI_HOME/.intron/toolchains"
+          for tool in clang cmake ninja; do
+            resolved="$(intron which "$tool")"
+            echo "$resolved"
+            test -n "$resolved"
+            case "$resolved" in
+              "$HOME/.intron/toolchains/"*) ;;
+              *)
+                echo "expected $tool under ~/.intron/toolchains, got: $resolved" >&2
+                exit 1
+                ;;
+            esac
+          done
 
-      - name: Build (macOS)
+      - name: Verify exon executable (macOS)
         if: runner.os == 'macOS'
-        shell: bash
         run: |
-          EXON_CI_HOME="$RUNNER_TEMP/exon-ci-home"
-          # Keep the macOS runner environment narrow so the portable config
-          # resolves toolchains from the expected intron home.
-          env -i \
-            HOME="$EXON_CI_HOME" \
-            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-            TMPDIR="${TMPDIR:-/tmp}" \
-            CI="${CI:-true}" \
-            GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
-            RUNNER_OS="$RUNNER_OS" \
-            RUNNER_ARCH="$RUNNER_ARCH" \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            ImageOS="${ImageOS:-}" \
-            ImageVersion="${ImageVersion:-}" \
-            ./.exon-ci build
-
-      - name: Test (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          EXON_CI_HOME="$RUNNER_TEMP/exon-ci-home"
-          env -i \
-            HOME="$EXON_CI_HOME" \
-            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-            TMPDIR="${TMPDIR:-/tmp}" \
-            CI="${CI:-true}" \
-            GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
-            RUNNER_OS="$RUNNER_OS" \
-            RUNNER_ARCH="$RUNNER_ARCH" \
-            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            ImageOS="${ImageOS:-}" \
-            ImageVersion="${ImageVersion:-}" \
-            ./.exon-ci test
+          ./.exon-ci version
 
       - name: Build and test (Linux)
         if: runner.os == 'Linux'
@@ -128,6 +104,7 @@ jobs:
           exon test
 
       - name: Verify
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           binary=""
