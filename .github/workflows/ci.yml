@@ -91,10 +91,11 @@ jobs:
             esac
           done
 
-      - name: Verify exon executable (macOS)
+      - name: Build and test (macOS)
         if: runner.os == 'macOS'
         run: |
-          ./.exon-ci version
+          ./.exon-ci build
+          ./.exon-ci test
 
       - name: Build and test (Linux)
         if: runner.os == 'Linux'
