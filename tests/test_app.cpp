@@ -103,6 +103,50 @@ void write_text_file(std::filesystem::path const& path, std::string_view text) {
 void write_empty_file(std::filesystem::path const& path) {
     write_text_file(path, "");
 }
+
+struct TestProjectLayout {
+    std::filesystem::path base;
+    std::filesystem::path home;
+    std::filesystem::path project;
+    std::filesystem::path intron_home;
+    std::filesystem::path llvm_bin;
+};
+
+auto make_test_project_layout(std::string_view name) -> TestProjectLayout {
+    auto base = std::filesystem::temp_directory_path() / std::format(
+        "{}-{}",
+        name,
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(base);
+    auto home = base / "home";
+    auto project = base / "project";
+    auto intron_home = home / ".intron";
+    auto llvm_bin = intron_home / "toolchains" / "llvm" / "22.1.2" / "bin";
+    std::filesystem::create_directories(project);
+    std::filesystem::create_directories(llvm_bin);
+    return {
+        .base = std::move(base),
+        .home = std::move(home),
+        .project = std::move(project),
+        .intron_home = std::move(intron_home),
+        .llvm_bin = std::move(llvm_bin),
+    };
+}
+
+auto make_fake_msvc_environment(std::filesystem::path const& base) -> intron::MsvcEnvironment {
+    auto bin_dir = base / "fake-msvc" / "bin";
+    return {
+        .bin_dir = bin_dir,
+        .cl = bin_dir / "cl.exe",
+        .variables = {
+            {"Path", (base / "fake-msvc" / "path").string()},
+            {"INCLUDE", (base / "fake-msvc" / "include").string()},
+            {"LIB", (base / "fake-msvc" / "lib").string()},
+            {"LIBPATH", (base / "fake-msvc" / "libpath").string()},
+        },
+    };
+}
+
 void test_parse_without_command() {
     auto argv0 = std::array{const_cast<char*>("intron")};
     auto parsed = intron::app::parse_command_request(
@@ -377,6 +421,230 @@ void test_exec_run_command_uses_resolved_env() {
         check(captured->env_overrides.at("WASI_SDK_PATH") == wasi_root.string(),
               "exec forwards resolved WASI_SDK_PATH override");
     }
+}
+
+void test_windows_env_prefers_msvc_over_llvm_when_both_configured() {
+#ifdef _WIN32
+    auto layout = make_test_project_layout("intron-test-app-env-msvc-priority");
+    auto cleanup = TempDirGuard{layout.base};
+    auto expected = make_fake_msvc_environment(layout.base);
+    write_text_file(
+        layout.home / ".intron" / "config.toml",
+        "[defaults.windows]\n"
+        "msvc = \"2022\"\n");
+    write_text_file(
+        layout.project / ".intron.toml",
+        "[toolchain]\n"
+        "llvm = \"22.1.2\"\n");
+    write_empty_file(layout.llvm_bin / "clang-cl.exe");
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+
+    auto ports = intron::RuntimePorts{};
+    ports.filesystem.exists = [](std::filesystem::path const& path) {
+        return std::filesystem::exists(path);
+    };
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+    ports.toolchain.msvc_environment = [expected] {
+        return std::optional<intron::MsvcEnvironment>{expected};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Env,
+        .raw_command = "env",
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "windows env succeeds when llvm and msvc are both configured");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:CC = ") && line.contains(expected.cl.string());
+          }),
+          "windows env prefers cl.exe when llvm and msvc are both configured");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:CXX = ") && line.contains(expected.cl.string());
+          }),
+          "windows env prefers cl.exe for CXX when llvm and msvc are both configured");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:PATH = ") && line.contains(layout.llvm_bin.string()) &&
+                     line.contains(expected.bin_dir.string());
+          }),
+          "windows env PATH keeps llvm bin and msvc bin when both are configured");
+    check(!std::ranges::any_of(result.stdout_lines, [](std::string const& line) {
+              return line.contains("$env:CC = ") && line.contains("clang-cl.exe");
+          }),
+          "windows env no longer reports clang-cl.exe as CC when msvc is configured");
+#endif
+}
+
+void test_windows_exec_prefers_msvc_over_llvm_when_both_configured() {
+#ifdef _WIN32
+    auto layout = make_test_project_layout("intron-test-app-exec-msvc-priority");
+    auto cleanup = TempDirGuard{layout.base};
+    auto expected = make_fake_msvc_environment(layout.base);
+    write_text_file(
+        layout.home / ".intron" / "config.toml",
+        "[defaults.windows]\n"
+        "msvc = \"2022\"\n");
+    write_text_file(
+        layout.project / ".intron.toml",
+        "[toolchain]\n"
+        "llvm = \"22.1.2\"\n");
+    write_empty_file(layout.llvm_bin / "clang-cl.exe");
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto path_guard = EnvGuard{"PATH"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    set_env("PATH", "C:\\BasePath");
+    std::filesystem::current_path(layout.project);
+
+    auto captured = std::optional<intron::ProcessRunRequest>{};
+    auto ports = intron::RuntimePorts{};
+    ports.filesystem.exists = [](std::filesystem::path const& path) {
+        return std::filesystem::exists(path);
+    };
+    ports.environment.get = [](std::string_view key) -> std::optional<std::string> {
+        auto owned = std::string{key};
+        if (auto* value = std::getenv(owned.c_str()); value) {
+            return std::string{value};
+        }
+        return std::nullopt;
+    };
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+    ports.toolchain.msvc_environment = [expected] {
+        return std::optional<intron::MsvcEnvironment>{expected};
+    };
+    ports.process.run = [&](intron::ProcessRunRequest const& request)
+        -> std::expected<int, std::string>
+    {
+        captured = request;
+        return 0;
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Exec,
+        .raw_command = "exec",
+        .args = {"--", "where.exe", "cl.exe"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "windows exec succeeds when llvm and msvc are both configured");
+    check(captured.has_value(), "windows exec forwards child request when llvm and msvc are both configured");
+    if (captured.has_value()) {
+        check(captured->env_overrides.at("CC") == expected.cl.string(),
+              "windows exec prefers cl.exe for CC when llvm and msvc are both configured");
+        check(captured->env_overrides.at("CXX") == expected.cl.string(),
+              "windows exec prefers cl.exe for CXX when llvm and msvc are both configured");
+        check(captured->env_overrides.at("PATH").starts_with(std::format(
+                  "{}{}{}",
+                  layout.llvm_bin.string(),
+                  path_separator(),
+                  expected.bin_dir.string())),
+              "windows exec PATH starts with llvm bin then msvc bin");
+        check(captured->env_overrides.at("PATH").contains(expected.variables.at("Path")),
+              "windows exec PATH keeps captured msvc PATH entries");
+        check(captured->env_overrides.at("PATH").ends_with("C:\\BasePath"),
+              "windows exec PATH keeps inherited PATH suffix");
+    }
+#endif
+}
+
+void test_windows_env_uses_clang_cl_when_only_llvm_is_configured() {
+#ifdef _WIN32
+    auto layout = make_test_project_layout("intron-test-app-env-llvm-only");
+    auto cleanup = TempDirGuard{layout.base};
+    auto clang = layout.llvm_bin / "clang-cl.exe";
+    write_text_file(
+        layout.project / ".intron.toml",
+        "[toolchain]\n"
+        "llvm = \"22.1.2\"\n");
+    write_empty_file(clang);
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+
+    auto ports = intron::RuntimePorts{};
+    ports.filesystem.exists = [](std::filesystem::path const& path) {
+        return std::filesystem::exists(path);
+    };
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Env,
+        .raw_command = "env",
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "windows env succeeds when only llvm is configured");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:CC = ") && line.contains(clang.string());
+          }),
+          "windows env uses clang-cl.exe when msvc is not configured");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:CXX = ") && line.contains(clang.string());
+          }),
+          "windows env uses clang-cl.exe for CXX when msvc is not configured");
+    check(!std::ranges::any_of(result.stdout_lines, [](std::string const& line) {
+              return line.contains("$env:INCLUDE = ") || line.contains("$env:LIB = ") ||
+                     line.contains("$env:LIBPATH = ");
+          }),
+          "windows env omits msvc include and lib variables when msvc is not configured");
+#endif
+}
+
+void test_windows_env_errors_when_msvc_is_configured_but_unavailable() {
+#ifdef _WIN32
+    auto layout = make_test_project_layout("intron-test-app-env-missing-msvc");
+    auto cleanup = TempDirGuard{layout.base};
+    write_text_file(
+        layout.home / ".intron" / "config.toml",
+        "[defaults.windows]\n"
+        "msvc = \"2022\"\n");
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+
+    auto ports = intron::RuntimePorts{};
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+    ports.toolchain.msvc_environment = [] {
+        return std::optional<intron::MsvcEnvironment>{};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Env,
+        .raw_command = "env",
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 1, "windows env fails when msvc is configured but unavailable");
+    check(result.stderr_lines == std::vector<std::string>{
+              "error: msvc is configured as a default toolchain but was not detected",
+              "hint: run 'intron install msvc 2022'"},
+          "windows env reports the existing msvc missing error");
+#endif
 }
 
 void test_env_run_command_uses_portable_windows_msvc_defaults() {
@@ -672,6 +940,10 @@ int main() {
     test_env_materialization();
     test_exec_usage_error();
     test_exec_run_command_uses_resolved_env();
+    test_windows_env_prefers_msvc_over_llvm_when_both_configured();
+    test_windows_exec_prefers_msvc_over_llvm_when_both_configured();
+    test_windows_env_uses_clang_cl_when_only_llvm_is_configured();
+    test_windows_env_errors_when_msvc_is_configured_but_unavailable();
     test_env_run_command_uses_portable_windows_msvc_defaults();
     test_exec_run_command_uses_portable_windows_msvc_defaults();
     test_use_without_args_preserves_platform_specific_defaults();

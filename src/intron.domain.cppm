@@ -130,6 +130,16 @@ struct EnvironmentPort {
     std::function<std::optional<std::filesystem::path>()> home_dir;
 };
 
+struct MsvcEnvironment {
+    std::filesystem::path bin_dir;
+    std::filesystem::path cl;
+    std::map<std::string, std::string> variables;
+};
+
+struct ToolchainPort {
+    std::function<std::optional<MsvcEnvironment>()> msvc_environment;
+};
+
 struct ClockPort {
     std::function<void(std::chrono::milliseconds)> sleep_for;
 };
@@ -144,6 +154,7 @@ struct RuntimePorts {
     HttpClientPort http;
     ProcessRunnerPort process;
     EnvironmentPort environment;
+    ToolchainPort toolchain;
     ClockPort clock;
     ConsolePort console;
 };

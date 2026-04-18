@@ -165,6 +165,22 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          foreach ($test in @(
+            'test-test_app.exe',
+            'test-test_config.exe',
+            'test-test_installer.exe',
+            'test-test_registry.exe'
+          )) {
+            $path = Join-Path $PWD "build\\$test"
+            if (-not (Test-Path $path)) {
+              throw "missing expected test binary: $path"
+            }
+            & $path
+          }
+
       - name: Verify
         run: .\build\intron.exe help
 

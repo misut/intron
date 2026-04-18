@@ -16,6 +16,7 @@ import std;
 import cppx.env;
 import cppx.env.system;
 import intron.domain;
+import installer;
 
 namespace {
 
@@ -409,6 +410,17 @@ auto make_runtime_ports() -> intron::RuntimePorts {
     };
     ports.environment.home_dir = [] {
         return cppx::env::system::home_dir();
+    };
+    ports.toolchain.msvc_environment = [] -> std::optional<intron::MsvcEnvironment> {
+        auto env = installer::msvc_environment();
+        if (!env.has_value()) {
+            return std::nullopt;
+        }
+        return intron::MsvcEnvironment{
+            .bin_dir = env->bin_dir,
+            .cl = env->cl,
+            .variables = env->variables,
+        };
     };
     ports.clock.sleep_for = [](std::chrono::milliseconds duration) {
         std::this_thread::sleep_for(duration);
