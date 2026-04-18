@@ -22,8 +22,6 @@ jobs:
           - os: ubuntu-24.04-arm
             platform: aarch64-linux-gnu
     runs-on: ${{ matrix.os }}
-    env:
-      EXON_CI_HOME: ${{ runner.temp }}/exon-ci-home
     steps:
       - uses: actions/checkout@v6
 
@@ -80,6 +78,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          EXON_CI_HOME="$RUNNER_TEMP/exon-ci-home"
           mkdir -p "$EXON_CI_HOME/.intron"
           ln -sfn "$HOME/.intron/toolchains" "$EXON_CI_HOME/.intron/toolchains"
 
@@ -87,6 +86,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          EXON_CI_HOME="$RUNNER_TEMP/exon-ci-home"
           # Keep the macOS runner environment narrow so the portable config
           # resolves toolchains from the expected intron home.
           env -i \
@@ -106,6 +106,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          EXON_CI_HOME="$RUNNER_TEMP/exon-ci-home"
           env -i \
             HOME="$EXON_CI_HOME" \
             PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
