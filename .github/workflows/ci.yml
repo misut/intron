@@ -22,6 +22,8 @@ jobs:
           - os: ubuntu-24.04-arm
             platform: aarch64-linux-gnu
     runs-on: ${{ matrix.os }}
+    env:
+      EXON_CI_HOME: ${{ runner.temp }}/exon-ci-home
     steps:
       - uses: actions/checkout@v6
 
@@ -74,16 +76,55 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Build and test
+      - name: Prepare clean macOS exon home
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            intron exec -- ./.exon-ci build
-            intron exec -- ./.exon-ci test
-          else
-            export PATH="/usr/lib/llvm-20/bin:$PATH"
-            exon build
-            exon test
-          fi
+          mkdir -p "$EXON_CI_HOME/.intron"
+          ln -sfn "$HOME/.intron/toolchains" "$EXON_CI_HOME/.intron/toolchains"
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Keep the macOS runner environment narrow so the portable config
+          # resolves toolchains from the expected intron home.
+          env -i \
+            HOME="$EXON_CI_HOME" \
+            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            CI="${CI:-true}" \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
+            RUNNER_OS="$RUNNER_OS" \
+            RUNNER_ARCH="$RUNNER_ARCH" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            ImageOS="${ImageOS:-}" \
+            ImageVersion="${ImageVersion:-}" \
+            ./.exon-ci build
+
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          env -i \
+            HOME="$EXON_CI_HOME" \
+            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            CI="${CI:-true}" \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
+            RUNNER_OS="$RUNNER_OS" \
+            RUNNER_ARCH="$RUNNER_ARCH" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            ImageOS="${ImageOS:-}" \
+            ImageVersion="${ImageVersion:-}" \
+            ./.exon-ci test
+
+      - name: Build and test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export PATH="/usr/lib/llvm-20/bin:$PATH"
+          exon build
+          exon test
 
       - name: Verify
         shell: bash
