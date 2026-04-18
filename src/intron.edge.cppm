@@ -164,6 +164,100 @@ auto resolve_executable(
     return *found;
 }
 
+#ifdef _WIN32
+auto to_wide(std::string_view value) -> std::wstring {
+    if (value.empty()) {
+        return {};
+    }
+    auto size = MultiByteToWideChar(
+        CP_ACP,
+        0,
+        value.data(),
+        static_cast<int>(value.size()),
+        nullptr,
+        0);
+    if (size <= 0) {
+        throw std::runtime_error("failed to convert string to UTF-16");
+    }
+    auto out = std::wstring(static_cast<std::size_t>(size), L'\0');
+    MultiByteToWideChar(
+        CP_ACP,
+        0,
+        value.data(),
+        static_cast<int>(value.size()),
+        out.data(),
+        size);
+    return out;
+}
+
+auto quote_windows_arg(std::wstring_view value) -> std::wstring {
+    if (value.empty()) {
+        return L"\"\"";
+    }
+
+    auto needs_quotes = false;
+    for (auto ch : value) {
+        if (ch == L' ' || ch == L'\t' || ch == L'"') {
+            needs_quotes = true;
+            break;
+        }
+    }
+    if (!needs_quotes) {
+        return std::wstring{value};
+    }
+
+    auto out = std::wstring{};
+    out.push_back(L'"');
+
+    auto backslashes = std::size_t{0};
+    for (auto ch : value) {
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (ch == L'"') {
+            out.append(backslashes * 2 + 1, L'\\');
+            out.push_back(L'"');
+            backslashes = 0;
+            continue;
+        }
+        if (backslashes > 0) {
+            out.append(backslashes, L'\\');
+            backslashes = 0;
+        }
+        out.push_back(ch);
+    }
+
+    if (backslashes > 0) {
+        out.append(backslashes * 2, L'\\');
+    }
+    out.push_back(L'"');
+    return out;
+}
+
+auto build_windows_command_line(std::filesystem::path const& executable,
+                                std::vector<std::string> const& argv) -> std::wstring
+{
+    auto command_line = quote_windows_arg(executable.wstring());
+    for (std::size_t i = 1; i < argv.size(); ++i) {
+        command_line.push_back(L' ');
+        command_line += quote_windows_arg(to_wide(argv[i]));
+    }
+    return command_line;
+}
+
+auto build_windows_environment_block(EnvMap const& env) -> std::vector<wchar_t> {
+    auto block = std::vector<wchar_t>{};
+    for (auto const& [key, value] : env) {
+        auto entry = to_wide(std::format("{}={}", key, value));
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    return block;
+}
+#endif
+
 #ifndef _WIN32
 auto normalize_unix_exit_status(int status) -> int {
     if (status == -1) {
@@ -190,63 +284,59 @@ auto run_process(intron::ProcessRunRequest const& request) -> std::expected<int,
     }
 
 #ifdef _WIN32
-    auto to_wide = [](std::string_view value) -> std::wstring {
-        if (value.empty()) {
-            return {};
-        }
-        auto size = MultiByteToWideChar(
-            CP_ACP,
-            0,
-            value.data(),
-            static_cast<int>(value.size()),
-            nullptr,
-            0);
-        if (size <= 0) {
-            throw std::runtime_error("failed to convert string to UTF-16");
-        }
-        auto out = std::wstring(static_cast<std::size_t>(size), L'\0');
-        MultiByteToWideChar(
-            CP_ACP,
-            0,
-            value.data(),
-            static_cast<int>(value.size()),
-            out.data(),
-            size);
-        return out;
-    };
+    auto command_line = build_windows_command_line(*executable, request.argv);
+    auto mutable_command_line = std::vector<wchar_t>(command_line.begin(), command_line.end());
+    mutable_command_line.push_back(L'\0');
+    auto environment = build_windows_environment_block(env);
 
-    auto wide_executable = executable->wstring();
-    auto wide_args = std::vector<std::wstring>{};
-    wide_args.reserve(request.argv.size());
-    for (auto const& arg : request.argv) {
-        wide_args.push_back(to_wide(arg));
-    }
-    auto argv = std::vector<wchar_t*>{};
-    argv.reserve(wide_args.size() + 1);
-    for (auto& arg : wide_args) {
-        argv.push_back(arg.data());
-    }
-    argv.push_back(nullptr);
+    auto startup_info = STARTUPINFOW{};
+    startup_info.cb = sizeof(startup_info);
+    startup_info.dwFlags |= STARTF_USESTDHANDLES;
+    startup_info.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup_info.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    startup_info.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
-    auto wide_env = std::vector<std::wstring>{};
-    wide_env.reserve(env.size());
-    for (auto const& [key, value] : env) {
-        wide_env.push_back(to_wide(std::format("{}={}", key, value)));
-    }
-    auto envp = std::vector<wchar_t*>{};
-    envp.reserve(wide_env.size() + 1);
-    for (auto& entry : wide_env) {
-        envp.push_back(entry.data());
-    }
-    envp.push_back(nullptr);
-
-    errno = 0;
-    auto exit_code = _wspawnve(_P_WAIT, wide_executable.c_str(), argv.data(), envp.data());
-    if (exit_code == -1) {
+    auto process_info = PROCESS_INFORMATION{};
+    auto created = CreateProcessW(
+        executable->c_str(),
+        mutable_command_line.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        CREATE_UNICODE_ENVIRONMENT,
+        environment.data(),
+        nullptr,
+        &startup_info,
+        &process_info);
+    if (!created) {
+        auto error = GetLastError();
         return std::unexpected(std::format(
             "failed to spawn '{}': {}",
             executable->string(),
-            std::generic_category().message(errno)));
+            std::system_category().message(static_cast<int>(error))));
+    }
+
+    auto wait_result = WaitForSingleObject(process_info.hProcess, INFINITE);
+    if (wait_result != WAIT_OBJECT_0) {
+        auto error = GetLastError();
+        CloseHandle(process_info.hThread);
+        CloseHandle(process_info.hProcess);
+        return std::unexpected(std::format(
+            "failed to wait for '{}': {}",
+            executable->string(),
+            std::system_category().message(static_cast<int>(error))));
+    }
+
+    DWORD exit_code = 1;
+    auto got_exit_code = GetExitCodeProcess(process_info.hProcess, &exit_code);
+    CloseHandle(process_info.hThread);
+    CloseHandle(process_info.hProcess);
+    if (!got_exit_code) {
+        auto error = GetLastError();
+        return std::unexpected(std::format(
+            "failed to read exit status for '{}': {}",
+            executable->string(),
+            std::system_category().message(static_cast<int>(error))));
     }
     return static_cast<int>(exit_code);
 #else

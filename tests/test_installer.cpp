@@ -101,6 +101,29 @@ struct EnvGuard {
     std::optional<std::string> original;
 };
 
+struct TempDirGuard {
+    explicit TempDirGuard(std::filesystem::path path)
+        : path(std::move(path))
+    {
+    }
+
+    ~TempDirGuard() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+
+    std::filesystem::path path;
+};
+
+void write_text_file(std::filesystem::path const& path, std::string_view text) {
+    auto parent = path.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    auto out = std::ofstream{path};
+    out << text;
+}
+
 void test_selected_backend_from_env() {
     auto guard = EnvGuard{"INTRON_NET_BACKEND"};
 
@@ -320,6 +343,51 @@ void test_msvc_binary_path() {
     std::filesystem::remove_all(temp, ec);
 }
 
+void test_capture_msvc_environment_with_wrapper_script() {
+#ifdef _WIN32
+    auto base = std::filesystem::temp_directory_path() / std::format(
+        "intron msvc env test {}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(base);
+    auto cleanup = TempDirGuard{base};
+
+    auto instance = fake_instance(
+        base.string(),
+        "Microsoft.VisualStudio.Product.Community",
+        "17.14.1",
+        true);
+    write_text_file(
+        *instance.vcvars64_path,
+        "@echo off\r\n"
+        "set INCLUDE=C:\\Fake Include\r\n"
+        "set LIB=C:\\Fake Lib\r\n"
+        "set LIBPATH=C:\\Fake LibPath\r\n"
+        "set Path=C:\\Fake Bin;%Path%\r\n");
+
+    auto env = installer::detail::capture_msvc_environment(instance);
+    check(env.has_value(), "msvc environment capture works with wrapper script");
+    if (!env.has_value()) {
+        return;
+    }
+    check(env->contains("INCLUDE"), "captured environment includes INCLUDE");
+    check(env->contains("LIB"), "captured environment includes LIB");
+    check(env->contains("LIBPATH"), "captured environment includes LIBPATH");
+    check(env->contains("Path"), "captured environment includes Path");
+    if (env->contains("INCLUDE")) {
+        check(env->at("INCLUDE") == "C:\\Fake Include", "captured INCLUDE keeps fake value");
+    }
+    if (env->contains("LIB")) {
+        check(env->at("LIB") == "C:\\Fake Lib", "captured LIB keeps fake value");
+    }
+    if (env->contains("LIBPATH")) {
+        check(env->at("LIBPATH") == "C:\\Fake LibPath", "captured LIBPATH keeps fake value");
+    }
+    if (env->contains("Path")) {
+        check(env->at("Path").starts_with("C:\\Fake Bin;"), "captured Path keeps fake prefix");
+    }
+#endif
+}
+
 void test_install_plan() {
     auto info = registry::resolve("cmake", "4.3.1");
     auto plan = intron::make_install_plan("/tmp/intron-home", info, true);
@@ -377,6 +445,7 @@ int main() {
     test_classify_msvc_installer_exit();
     test_msvc_helper_paths();
     test_msvc_binary_path();
+    test_capture_msvc_environment_with_wrapper_script();
     test_install_plan();
     test_msvc_environment_smoke();
 

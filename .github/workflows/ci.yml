@@ -41,9 +41,9 @@ jobs:
       - name: Install intron (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Pin to a known-good version, not latest, to avoid chicken-and-egg
-          # if the most recent release is broken (e.g. has zero assets).
-          gh release download v0.17.0 -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
+          # Bootstrap from the version pinned in mise.toml so CI understands
+          # the current portable .intron.toml layout.
+          gh release download v${{ steps.tool-versions.outputs.intron }} -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
           tar xzf intron-*.tar.gz && sudo mv intron /usr/local/bin/ && rm intron-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,12 +51,7 @@ jobs:
       - name: Install toolchains (macOS)
         if: runner.os == 'macOS'
         run: |
-          intron install cmake 4.3.1
-          intron install ninja 1.13.2
-          intron install llvm 22.1.2
-          intron default llvm 22.1.2
-          intron default cmake 4.3.1
-          intron default ninja 1.13.2
+          intron install
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -68,21 +63,48 @@ jobs:
       - name: Install exon
         run: |
           gh release download v${{ steps.tool-versions.outputs.exon }} -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
-          tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
+          tar xzf exon-*.tar.gz
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            mv exon ./.exon-ci
+            chmod +x ./.exon-ci
+          else
+            sudo mv exon /usr/local/bin/
+          fi
+          rm exon-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Build and test
+      - name: Verify portable toolchain resolution (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            eval "$(intron env)"
-          else
-            export PATH="/usr/lib/llvm-20/bin:$PATH"
-          fi
+          for tool in clang cmake ninja; do
+            resolved="$(intron which "$tool")"
+            echo "$resolved"
+            test -n "$resolved"
+            case "$resolved" in
+              "$HOME/.intron/toolchains/"*) ;;
+              *)
+                echo "expected $tool under ~/.intron/toolchains, got: $resolved" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Verify exon executable (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./.exon-ci version
+
+      - name: Build and test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export PATH="/usr/lib/llvm-20/bin:$PATH"
           exon build
           exon test
 
       - name: Verify
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           binary=""
@@ -160,6 +182,15 @@ jobs:
       - name: Verify Windows env output
         shell: pwsh
         run: |
+          foreach ($name in @('INCLUDE', 'LIB', 'LIBPATH')) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+          }
+
+          $expectedCl = (& .\build\intron.exe which cl.exe | Select-Object -First 1).Trim()
+          if (-not $expectedCl) {
+            throw 'missing expected cl.exe path from intron which'
+          }
+
           $envOutput = & .\build\intron.exe env
           $envOutput | Out-Host
 
@@ -167,4 +198,15 @@ jobs:
             if (-not ($envOutput | Select-String -SimpleMatch $needle)) {
               throw "missing expected intron env output: $needle"
             }
+          }
+
+          $execOutput = & .\build\intron.exe exec -- where.exe cl.exe
+          $execOutput | Out-Host
+
+          $resolvedCl = ($execOutput | Where-Object { $_ } | Select-Object -First 1).Trim()
+          if (-not $resolvedCl) {
+            throw 'missing expected intron exec output for cl.exe'
+          }
+          if ($resolvedCl -ne $expectedCl) {
+            throw "intron exec resolved unexpected cl.exe path: $resolvedCl"
           }
