@@ -63,7 +63,14 @@ jobs:
       - name: Install exon
         run: |
           gh release download v${{ steps.tool-versions.outputs.exon }} -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
-          tar xzf exon-*.tar.gz && sudo mv exon /usr/local/bin/ && rm exon-*.tar.gz
+          tar xzf exon-*.tar.gz
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            mv exon ./.exon-ci
+            chmod +x ./.exon-ci
+          else
+            sudo mv exon /usr/local/bin/
+          fi
+          rm exon-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -76,11 +83,13 @@ jobs:
             export PATH="$llvm_bin:$cmake_bin:$ninja_bin:$PATH"
             export CC=clang
             export CXX=clang++
+            ./.exon-ci build
+            ./.exon-ci test
           else
             export PATH="/usr/lib/llvm-20/bin:$PATH"
+            exon build
+            exon test
           fi
-          exon build
-          exon test
 
       - name: Verify
         shell: bash
