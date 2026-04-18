@@ -140,6 +140,56 @@ auto write_text_file(std::filesystem::path const& path, std::string content) -> 
     }
 }
 
+auto try_write_text_file(std::filesystem::path const& path, std::string content) -> bool {
+    auto written = cppx::fs::system::write_if_changed({
+        .path = path,
+        .content = std::move(content),
+    });
+    return static_cast<bool>(written);
+}
+
+auto command_processor_path() -> std::filesystem::path {
+    if constexpr (!is_windows) {
+        return {};
+    }
+    if (auto const* comspec = std::getenv("ComSpec"); comspec && *comspec) {
+        auto path = std::filesystem::path{comspec};
+        if (std::filesystem::exists(path)) {
+            return path;
+        }
+    }
+    return "cmd.exe";
+}
+
+auto temp_batch_script_path(std::string_view stem) -> std::optional<std::filesystem::path> {
+    if constexpr (!is_windows) {
+        return std::nullopt;
+    }
+
+    std::error_code ec;
+    auto temp_dir = std::filesystem::temp_directory_path(ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    auto unique_id = std::format(
+        "{}-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count(),
+        std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    return temp_dir / std::format("{}-{}.cmd", stem, unique_id);
+}
+
+auto write_capture_msvc_environment_script(std::filesystem::path const& script_path,
+                                           std::filesystem::path const& vcvars_path) -> bool
+{
+    auto content = std::format(
+        "@echo off\r\n"
+        "call \"{}\" >nul\r\n"
+        "if errorlevel 1 exit /b %errorlevel%\r\n"
+        "set\r\n",
+        vcvars_path.string());
+    return try_write_text_file(script_path, std::move(content));
+}
+
 auto strip_depth(std::string_view prefix) -> int {
     if (prefix.empty()) {
         return 0;
@@ -1023,14 +1073,26 @@ auto capture_msvc_environment(VisualStudioInstance const& instance)
         return std::nullopt;
     }
 
+    auto script_path = temp_batch_script_path("intron-msvc-env");
+    if (!script_path) {
+        return std::nullopt;
+    }
+    if (!write_capture_msvc_environment_script(*script_path, *instance.vcvars64_path)) {
+        return std::nullopt;
+    }
+
     auto captured = cppx::process::system::capture({
-        .program = "cmd",
+        .program = command_processor_path().string(),
         .args = {
             "/d",
             "/c",
-            std::format("call \"{}\" >nul && set", instance.vcvars64_path->string()),
+            script_path->string(),
         },
     });
+    {
+        std::error_code ec;
+        std::filesystem::remove(*script_path, ec);
+    }
     if (!captured || captured->timed_out || captured->exit_code != 0) {
         return std::nullopt;
     }

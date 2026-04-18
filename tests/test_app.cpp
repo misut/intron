@@ -3,6 +3,7 @@
 import std;
 import intron.app;
 import config;
+import installer;
 import intron.domain;
 import registry;
 
@@ -378,6 +379,176 @@ void test_exec_run_command_uses_resolved_env() {
     }
 }
 
+void test_env_run_command_uses_portable_windows_msvc_defaults() {
+#ifdef _WIN32
+    auto base = std::filesystem::temp_directory_path() / std::format(
+        "intron-test-app-env-msvc-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(base);
+    auto cleanup = TempDirGuard{base};
+
+    auto home = base / "home";
+    auto project = base / "project";
+    std::filesystem::create_directories(home / ".intron");
+    std::filesystem::create_directories(project);
+    write_text_file(
+        project / ".intron.toml",
+        "[toolchain.windows]\n"
+        "msvc = \"2022\"\n");
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto include_guard = EnvGuard{"INCLUDE"};
+    auto lib_guard = EnvGuard{"LIB"};
+    auto libpath_guard = EnvGuard{"LIBPATH"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", home.string());
+    set_env("USERPROFILE", home.string());
+    clear_env("INCLUDE");
+    clear_env("LIB");
+    clear_env("LIBPATH");
+    std::filesystem::current_path(project);
+
+    auto expected = installer::msvc_environment();
+    if (!expected.has_value()) {
+        std::println("SKIP: msvc environment not available");
+        return;
+    }
+
+    auto ports = intron::RuntimePorts{};
+    ports.environment.home_dir = [home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Env,
+        .raw_command = "env",
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "env succeeds with portable windows msvc config");
+    check(result.stderr_lines.empty(), "env emits no stderr for portable windows msvc config");
+    check(std::ranges::any_of(result.stdout_lines, [](std::string const& line) {
+              return line.contains("$env:PATH = ");
+          }),
+          "env renders PATH assignment for portable windows msvc config");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:CC = ") && line.contains(expected->cl.string());
+          }),
+          "env renders CC from detected msvc environment");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:CXX = ") && line.contains(expected->cl.string());
+          }),
+          "env renders CXX from detected msvc environment");
+    check(std::ranges::any_of(result.stdout_lines, [&](std::string const& line) {
+              return line.contains("$env:PATH = ") && line.contains(expected->bin_dir.string());
+          }),
+          "env PATH includes detected msvc bin directory");
+    check(std::ranges::any_of(result.stdout_lines, [](std::string const& line) {
+              return line.contains("$env:INCLUDE = ");
+          }),
+          "env renders INCLUDE from detected msvc environment");
+    check(std::ranges::any_of(result.stdout_lines, [](std::string const& line) {
+              return line.contains("$env:LIB = ");
+          }),
+          "env renders LIB from detected msvc environment");
+    check(std::ranges::any_of(result.stdout_lines, [](std::string const& line) {
+              return line.contains("$env:LIBPATH = ");
+          }),
+          "env renders LIBPATH from detected msvc environment");
+#endif
+}
+
+void test_exec_run_command_uses_portable_windows_msvc_defaults() {
+#ifdef _WIN32
+    auto base = std::filesystem::temp_directory_path() / std::format(
+        "intron-test-app-exec-msvc-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(base);
+    auto cleanup = TempDirGuard{base};
+
+    auto home = base / "home";
+    auto project = base / "project";
+    std::filesystem::create_directories(home / ".intron");
+    std::filesystem::create_directories(project);
+    write_text_file(
+        project / ".intron.toml",
+        "[toolchain.windows]\n"
+        "msvc = \"2022\"\n");
+
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto include_guard = EnvGuard{"INCLUDE"};
+    auto lib_guard = EnvGuard{"LIB"};
+    auto libpath_guard = EnvGuard{"LIBPATH"};
+    auto path_guard = EnvGuard{"PATH"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", home.string());
+    set_env("USERPROFILE", home.string());
+    set_env("PATH", "C:\\BasePath");
+    clear_env("INCLUDE");
+    clear_env("LIB");
+    clear_env("LIBPATH");
+    std::filesystem::current_path(project);
+
+    auto expected = installer::msvc_environment();
+    if (!expected.has_value()) {
+        std::println("SKIP: msvc environment not available");
+        return;
+    }
+
+    auto captured = std::optional<intron::ProcessRunRequest>{};
+    auto ports = intron::RuntimePorts{};
+    ports.environment.get = [](std::string_view key) -> std::optional<std::string> {
+        auto owned = std::string{key};
+        if (auto* value = std::getenv(owned.c_str()); value) {
+            return std::string{value};
+        }
+        return std::nullopt;
+    };
+    ports.environment.home_dir = [home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+    ports.process.run = [&](intron::ProcessRunRequest const& request)
+        -> std::expected<int, std::string>
+    {
+        captured = request;
+        return 0;
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Exec,
+        .raw_command = "exec",
+        .args = {"--", "where.exe", "cl.exe"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "exec succeeds with portable windows msvc config");
+    check(captured.has_value(), "exec forwards child request for portable windows msvc config");
+    if (captured.has_value()) {
+        check(captured->argv == std::vector<std::string>{"where.exe", "cl.exe"},
+              "exec preserves child argv for portable windows msvc config");
+        check(captured->env_overrides.at("CC") == expected->cl.string(),
+              "exec forwards CC from detected msvc environment");
+        check(captured->env_overrides.at("CXX") == expected->cl.string(),
+              "exec forwards CXX from detected msvc environment");
+        check(captured->env_overrides.at("INCLUDE") == expected->variables.at("INCLUDE"),
+              "exec forwards INCLUDE from detected msvc environment");
+        check(captured->env_overrides.at("LIB") == expected->variables.at("LIB"),
+              "exec forwards LIB from detected msvc environment");
+        check(captured->env_overrides.at("LIBPATH") == expected->variables.at("LIBPATH"),
+              "exec forwards LIBPATH from detected msvc environment");
+        check(captured->env_overrides.at("PATH").starts_with(
+                  std::format("{}{}", expected->bin_dir.string(), path_separator())),
+              "exec PATH starts with detected msvc bin directory");
+        check(captured->env_overrides.at("PATH").contains(expected->variables.at("Path")),
+              "exec PATH includes captured msvc PATH value");
+        check(captured->env_overrides.at("PATH").ends_with("C:\\BasePath"),
+              "exec PATH keeps inherited PATH suffix");
+    }
+#endif
+}
+
 void test_use_without_args_preserves_platform_specific_defaults() {
     auto const tmp = std::filesystem::temp_directory_path() /
                      "intron_test_use_platform_defaults";
@@ -501,6 +672,8 @@ int main() {
     test_env_materialization();
     test_exec_usage_error();
     test_exec_run_command_uses_resolved_env();
+    test_env_run_command_uses_portable_windows_msvc_defaults();
+    test_exec_run_command_uses_portable_windows_msvc_defaults();
     test_use_without_args_preserves_platform_specific_defaults();
     test_use_without_args_keeps_common_and_platform_override();
 

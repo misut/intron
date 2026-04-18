@@ -43,9 +43,7 @@ Requires [exon](https://github.com/misut/exon) and a C++23 toolchain with
 # macOS — self-host with intron:
 curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
 git clone git@github.com:misut/intron.git && cd intron
-intron install llvm 22.1.2
-intron install cmake 4.3.1
-intron install ninja 1.13.2
+intron install
 eval "$(intron env)"
 exon build --release
 
@@ -66,11 +64,12 @@ From a regular PowerShell session:
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
-intron install msvc 2022
-intron default msvc 2022 --platform windows
+git clone https://github.com/misut/intron
+cd intron
+intron install
 ```
 
-`intron install msvc 2022` will:
+With the repo's `.intron.toml`, `intron install` will:
 
 - reuse a compatible Visual Studio 2022 / Build Tools 2022 instance when one already exists
 - modify an existing Visual Studio 2022 instance to add the C++ workload when needed
@@ -87,10 +86,8 @@ Invoke-Expression ((intron env) -join "`n")
 Once that environment is active, you can bootstrap intron itself from a normal shell:
 
 ```powershell
-git clone https://github.com/misut/intron
 git clone https://github.com/misut/tomlcpp --branch v0.3.0
 git clone https://github.com/misut/cppx --branch v1.4.0
-cd intron
 cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
   -DTOMLCPP_DIR=..\tomlcpp `
@@ -102,10 +99,8 @@ cmake --build build
 Or keep the current shell untouched and run the same flow through `intron exec`:
 
 ```powershell
-git clone https://github.com/misut/intron
 git clone https://github.com/misut/tomlcpp --branch v0.3.0
 git clone https://github.com/misut/cppx --branch v1.4.0
-cd intron
 intron exec -- cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
   -DTOMLCPP_DIR=..\tomlcpp `
@@ -151,6 +146,9 @@ intron exec -- cmake --version
 intron exec -- exon test
 ```
 
+On Windows PowerShell, use `Invoke-Expression ((intron env) -join "`n")`
+instead of `eval "$(intron env)"`.
+
 ## Commands
 
 | Command | Description |
@@ -161,7 +159,7 @@ intron exec -- exon test
 | `intron which <binary>` | Print absolute path to a binary |
 | `intron default <tool> <version> [--platform <name>]` | Set global default version |
 | `intron use [tool] [version] [--platform <name>]` | Set project toolchain in `.intron.toml` |
-| `intron env` | Print environment variables (`eval "$(intron env)"`) |
+| `intron env` | Print environment variables (`eval "$(intron env)"` or PowerShell `Invoke-Expression ((intron env) -join "`n")`) |
 | `intron exec -- <command> [args...]` | Run a command with the resolved intron environment |
 | `intron update` | Check for newer versions |
 | `intron upgrade [tool]` | Upgrade tools to latest |

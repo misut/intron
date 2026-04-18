@@ -51,12 +51,7 @@ jobs:
       - name: Install toolchains (macOS)
         if: runner.os == 'macOS'
         run: |
-          intron install cmake 4.3.1
-          intron install ninja 1.13.2
-          intron install llvm 22.1.2
-          intron default llvm 22.1.2
-          intron default cmake 4.3.1
-          intron default ninja 1.13.2
+          intron install
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -160,6 +155,15 @@ jobs:
       - name: Verify Windows env output
         shell: pwsh
         run: |
+          foreach ($name in @('INCLUDE', 'LIB', 'LIBPATH')) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+          }
+
+          $expectedCl = (& .\build\intron.exe which cl.exe | Select-Object -First 1).Trim()
+          if (-not $expectedCl) {
+            throw 'missing expected cl.exe path from intron which'
+          }
+
           $envOutput = & .\build\intron.exe env
           $envOutput | Out-Host
 
@@ -167,4 +171,15 @@ jobs:
             if (-not ($envOutput | Select-String -SimpleMatch $needle)) {
               throw "missing expected intron env output: $needle"
             }
+          }
+
+          $execOutput = & .\build\intron.exe exec -- where.exe cl.exe
+          $execOutput | Out-Host
+
+          $resolvedCl = ($execOutput | Where-Object { $_ } | Select-Object -First 1).Trim()
+          if (-not $resolvedCl) {
+            throw 'missing expected intron exec output for cl.exe'
+          }
+          if ($resolvedCl -ne $expectedCl) {
+            throw "intron exec resolved unexpected cl.exe path: $resolvedCl"
           }
