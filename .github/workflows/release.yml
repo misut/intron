@@ -151,6 +151,59 @@ jobs:
             intron-*.zip
           generate_release_notes: true
 
+  self-bump:
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ secrets.BUMP_BOT_TOKEN }}
+
+      - name: Create and auto-merge self bump PR
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CURRENT=$(sed -n 's/^"vfox:misut\/mise-intron"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/\1/p' mise.toml)
+          test -n "$CURRENT"
+          if [ "$CURRENT" = "$VERSION" ]; then
+            echo "mise.toml already points to intron ${VERSION}"
+            exit 0
+          fi
+
+          sed -i "s|\"vfox:misut/mise-intron\" = \"${CURRENT}\"|\"vfox:misut/mise-intron\" = \"${VERSION}\"|" mise.toml
+
+          BRANCH="chore/bump-intron-v${VERSION}"
+          git checkout -b "$BRANCH"
+          git add mise.toml
+          if git diff --cached --quiet; then
+            echo "No changes detected"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --author "misut <pkr5207@gmail.com>" -m "chore: bump intron to v${VERSION}"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git push --force origin "HEAD:$BRANCH"
+          else
+            git push origin "$BRANCH"
+          fi
+
+          PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create \
+              --title "chore: bump intron to v${VERSION}" \
+              --body "Automated bump triggered by [intron v${VERSION}](https://github.com/misut/intron/releases/tag/v${VERSION})." \
+              --base main \
+              --head "$BRANCH")
+          fi
+
+          gh pr merge "$PR_URL" --auto --squash --delete-branch
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_BOT_TOKEN }}
+
   notify:
     needs: [release]
     runs-on: ubuntu-latest
