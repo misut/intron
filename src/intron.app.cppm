@@ -36,6 +36,23 @@ auto resolved_intron_home(intron::RuntimePorts const& ports) -> std::filesystem:
     return installer::intron_home_path(resolved_home_dir(ports));
 }
 
+auto resolved_msvc_environment(intron::RuntimePorts const& ports)
+    -> std::optional<intron::MsvcEnvironment>
+{
+    if (ports.toolchain.msvc_environment) {
+        return ports.toolchain.msvc_environment();
+    }
+    auto env = installer::msvc_environment();
+    if (!env.has_value()) {
+        return std::nullopt;
+    }
+    return intron::MsvcEnvironment{
+        .bin_dir = env->bin_dir,
+        .cl = env->cl,
+        .variables = env->variables,
+    };
+}
+
 auto usage_result(int exit_code) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = exit_code,
@@ -507,9 +524,9 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
 
     auto intron_home = resolved_intron_home(ports);
 
-    std::optional<installer::MsvcEnvironment> msvc_env;
+    std::optional<intron::MsvcEnvironment> msvc_env;
     if (defaults.contains("msvc")) {
-        msvc_env = installer::msvc_environment();
+        msvc_env = resolved_msvc_environment(ports);
         if (!msvc_env) {
             auto result = intron::CommandResult{
                 .exit_code = 1,
@@ -570,28 +587,27 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
     auto cc = std::optional<std::filesystem::path>{};
     auto cxx = std::optional<std::filesystem::path>{};
 
-    if (defaults.contains("llvm")) {
-        auto llvm_bin = installer::toolchain_path(intron_home, "llvm", defaults.at("llvm")) / "bin";
 #ifdef _WIN32
+    if (defaults.contains("msvc") && msvc_env) {
+        cc = msvc_env->cl;
+        cxx = msvc_env->cl;
+    } else if (defaults.contains("llvm")) {
+        auto llvm_bin = installer::toolchain_path(intron_home, "llvm", defaults.at("llvm")) / "bin";
         auto clang = llvm_bin / "clang-cl.exe";
         if (exists_with_ports(ports, clang)) {
             cc = clang;
             cxx = clang;
         }
+    }
 #else
+    if (defaults.contains("llvm")) {
+        auto llvm_bin = installer::toolchain_path(intron_home, "llvm", defaults.at("llvm")) / "bin";
         auto clang = llvm_bin / "clang";
         auto clangxx = llvm_bin / "clang++";
         if (exists_with_ports(ports, clang)) {
             cc = clang;
             cxx = clangxx;
         }
-#endif
-    }
-
-#ifdef _WIN32
-    if (!cc && defaults.contains("msvc") && msvc_env) {
-        cc = msvc_env->cl;
-        cxx = msvc_env->cl;
     }
 #endif
 

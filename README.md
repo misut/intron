@@ -131,6 +131,27 @@ This is intended to make direct execution of MSVC-built tools and Windows ASan b
 
 `intron exec -- <command> [args...]` uses the same resolved MSVC-related variables and injects them directly into the child process environment, so commands such as `cl.exe` and `exon test` can run without manually `eval`-ing the shell output first.
 
+On Windows, compiler selection now follows the effective defaults after project and
+global config are merged:
+
+- If `msvc` is configured, `intron env` / `intron exec` use `cl.exe` for `CC` and `CXX`.
+- If `msvc` is not configured and `llvm` is configured, they use `clang-cl.exe`.
+- Installed LLVM tools still stay on `PATH`, even when `cl.exe` is selected.
+
+Before this change, a mixed configuration such as project `[toolchain] llvm = "22.1.2"`
+plus global `[defaults.windows] msvc = "2022"` still selected `clang-cl.exe` for
+`CC` / `CXX`. That older hybrid mode no longer happens implicitly. If you still want
+it, override `CC` and `CXX` manually after `intron env` or before `intron exec`.
+
+This is why a repository such as `phenotype` could differ between local Windows and
+GitHub Actions Windows CI:
+
+- Local Windows: the repo's common `.intron.toml` kept `llvm`, and the user's
+  `~/.intron/config.toml` added `[defaults.windows] msvc = "2022"`, so `intron env`
+  merged both sources into one effective Windows toolchain set.
+- GitHub Actions Windows CI: the workflow used `ilammy/msvc-dev-cmd@v1` and then set
+  `CC=cl` / `CXX=cl` directly, which bypassed intron's compiler selection logic.
+
 ## Quick Start
 
 ```sh
