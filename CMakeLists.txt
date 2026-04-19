@@ -13,19 +13,27 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
+if(NOT DEFINED EXON_ENABLE_TEST_TARGETS)
+    set(EXON_ENABLE_TEST_TARGETS ON)
+endif()
+
 include(FetchContent)
-FetchContent_Declare(cppx
-    GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.4.0
-    GIT_SHALLOW ON
-)
-FetchContent_Declare(tomlcpp
-    GIT_REPOSITORY https://github.com/misut/tomlcpp.git
-    GIT_TAG v0.3.0
-    GIT_SHALLOW ON
-)
-FetchContent_MakeAvailable(cppx)
-FetchContent_MakeAvailable(tomlcpp)
+if(NOT TARGET cppx)
+    FetchContent_Declare(cppx
+        GIT_REPOSITORY https://github.com/misut/cppx.git
+        GIT_TAG v1.4.0
+        GIT_SHALLOW ON
+    )
+    FetchContent_MakeAvailable(cppx)
+endif()
+if(NOT TARGET tomlcpp)
+    FetchContent_Declare(tomlcpp
+        GIT_REPOSITORY https://github.com/misut/tomlcpp.git
+        GIT_TAG v0.3.0
+        GIT_SHALLOW ON
+    )
+    FetchContent_MakeAvailable(tomlcpp)
+endif()
 
 add_library(intron-modules)
 target_sources(intron-modules
@@ -101,6 +109,8 @@ if(PROJECT_IS_TOP_LEVEL)
         )
     endif()
 endif()
+
+if(EXON_ENABLE_TEST_TARGETS)
 
 add_executable(test-test_app)
 target_sources(test-test_app PRIVATE
@@ -212,4 +222,5 @@ if(PROJECT_IS_TOP_LEVEL)
             -Wl,-framework,CoreFoundation
         )
     endif()
+endif()
 endif()
