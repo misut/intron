@@ -147,6 +147,24 @@ auto make_fake_msvc_environment(std::filesystem::path const& base) -> intron::Ms
     };
 }
 
+auto make_msvc_update_status(intron::MsvcUpdateState state,
+                             std::string current_version = {},
+                             std::optional<std::string> latest_version = std::nullopt,
+                             std::string installation_version = {},
+                             std::optional<std::string> latest_installation_version =
+                                 std::nullopt) -> intron::MsvcUpdateStatus
+{
+    return {
+        .installation_version = installation_version.empty()
+            ? current_version
+            : std::move(installation_version),
+        .latest_installation_version = std::move(latest_installation_version),
+        .current_version = std::move(current_version),
+        .latest_version = std::move(latest_version),
+        .state = state,
+    };
+}
+
 void test_parse_without_command() {
     auto argv0 = std::array{const_cast<char*>("intron")};
     auto parsed = intron::app::parse_command_request(
@@ -270,6 +288,208 @@ void test_build_tool_map() {
 
     check(current.at("llvm") == "22.1.2", "installed version wins over defaults");
     check(current.at("ninja") == "1.13.2", "defaults fill missing installed tools");
+}
+
+void test_update_msvc_uses_explicit_status_path() {
+    auto status_calls = 0;
+    auto upgrade_calls = 0;
+    auto ports = intron::RuntimePorts{};
+    ports.toolchain.msvc_update_status = [&] {
+        ++status_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(
+                intron::MsvcUpdateState::UpdateAvailable,
+                "17.14.9",
+                "17.14.30",
+                "17.14.36310.24",
+                "17.14.37203.1")};
+    };
+    ports.toolchain.msvc_upgrade = [&] {
+        ++upgrade_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(intron::MsvcUpdateState::UpToDate, "17.14.30", "17.14.30")};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Update,
+        .raw_command = "update",
+        .args = {"msvc"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "update msvc exits successfully");
+    check(status_calls == 1, "update msvc queries explicit msvc status exactly once");
+    check(upgrade_calls == 0, "update msvc does not trigger upgrade");
+    check(result.stdout_lines == std::vector<std::string>{
+              "msvc 17.14.9 -> 17.14.30 (update available)"},
+          "update msvc reports display versions");
+}
+
+void test_update_without_args_does_not_auto_handle_msvc() {
+    auto layout = make_test_project_layout("intron-test-app-update-no-msvc");
+    auto cleanup = TempDirGuard{layout.base};
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+
+    auto status_calls = 0;
+    auto latest_calls = 0;
+    auto ports = intron::RuntimePorts{};
+    ports.toolchain.latest_version = [&](std::string_view tool) -> std::optional<std::string> {
+        ++latest_calls;
+        if (tool == "llvm") return "22.1.2";
+        if (tool == "cmake") return "4.3.1";
+        if (tool == "ninja") return "1.13.2";
+        if (tool == "wasi-sdk") return "32";
+        if (tool == "wasmtime") return "43.0.1";
+        return std::nullopt;
+    };
+    ports.toolchain.msvc_update_status = [&] {
+        ++status_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(intron::MsvcUpdateState::UpToDate, "17.14.9")};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Update,
+        .raw_command = "update",
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "update without args succeeds");
+    check(status_calls == 0, "update without args does not query msvc status");
+    check(latest_calls > 0, "update without args still checks non-system tools");
+}
+
+void test_upgrade_msvc_succeeds() {
+    auto status_calls = 0;
+    auto upgrade_calls = 0;
+    auto ports = intron::RuntimePorts{};
+    ports.toolchain.msvc_update_status = [&] {
+        ++status_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(
+                intron::MsvcUpdateState::UpdateAvailable,
+                "17.14.9",
+                "17.14.30",
+                "17.14.36310.24",
+                "17.14.37203.1")};
+    };
+    ports.toolchain.msvc_upgrade = [&] {
+        ++upgrade_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(
+                intron::MsvcUpdateState::UpToDate,
+                "17.14.30",
+                "17.14.30",
+                "17.14.37203.1",
+                "17.14.37203.1")};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Upgrade,
+        .raw_command = "upgrade",
+        .args = {"msvc"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "upgrade msvc exits successfully");
+    check(status_calls == 1, "upgrade msvc checks current status once");
+    check(upgrade_calls == 1, "upgrade msvc triggers installer upgrade once");
+    check(result.stdout_lines == std::vector<std::string>{
+              "msvc 17.14.9 -> 17.14.30...",
+              "",
+              "Upgraded msvc to 17.14.30"},
+          "upgrade msvc reports transition and completion");
+}
+
+void test_upgrade_msvc_handles_unknown_latest_version() {
+    auto upgrade_calls = 0;
+    auto ports = intron::RuntimePorts{};
+    ports.toolchain.msvc_update_status = [] {
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(intron::MsvcUpdateState::Unknown, "17.14.9")};
+    };
+    ports.toolchain.msvc_upgrade = [&] {
+        ++upgrade_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(intron::MsvcUpdateState::UpToDate, "17.14.30")};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Upgrade,
+        .raw_command = "upgrade",
+        .args = {"msvc"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 1, "upgrade msvc fails when latest version is unknown");
+    check(upgrade_calls == 0, "upgrade msvc does not run installer when latest version is unknown");
+    check(result.stdout_lines == std::vector<std::string>{"msvc: could not check latest version"},
+          "upgrade msvc reports unknown latest version");
+}
+
+void test_upgrade_msvc_handles_missing_installation() {
+    auto ports = intron::RuntimePorts{};
+    ports.toolchain.msvc_update_status = [] {
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(intron::MsvcUpdateState::Missing)};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Upgrade,
+        .raw_command = "upgrade",
+        .args = {"msvc"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 1, "upgrade msvc fails when msvc is missing");
+    check(result.stderr_lines == std::vector<std::string>{
+              "error: msvc is not installed",
+              "hint: run 'intron install msvc 2022'"},
+          "upgrade msvc reports missing installation and hint");
+}
+
+void test_upgrade_without_args_does_not_auto_handle_msvc() {
+    auto layout = make_test_project_layout("intron-test-app-upgrade-no-msvc");
+    auto cleanup = TempDirGuard{layout.base};
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+
+    auto status_calls = 0;
+    auto latest_calls = 0;
+    auto ports = intron::RuntimePorts{};
+    ports.toolchain.latest_version = [&](std::string_view tool) -> std::optional<std::string> {
+        ++latest_calls;
+        if (tool == "llvm") {
+            return std::nullopt;
+        }
+        return std::nullopt;
+    };
+    ports.toolchain.msvc_update_status = [&] {
+        ++status_calls;
+        return std::expected<intron::MsvcUpdateStatus, std::string>{
+            make_msvc_update_status(intron::MsvcUpdateState::UpToDate, "17.14.9")};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Upgrade,
+        .raw_command = "upgrade",
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "upgrade without args succeeds without touching msvc");
+    check(status_calls == 0, "upgrade without args does not query msvc status");
+    check(latest_calls > 0, "upgrade without args still checks non-system tools");
+    check(result.stdout_lines == std::vector<std::string>{"llvm: could not check latest version"},
+          "upgrade without args ignores msvc-only state");
 }
 
 void test_env_rendering() {
@@ -936,6 +1156,12 @@ int main() {
     test_parse_exec_args();
     test_tool_lookup();
     test_build_tool_map();
+    test_update_msvc_uses_explicit_status_path();
+    test_update_without_args_does_not_auto_handle_msvc();
+    test_upgrade_msvc_succeeds();
+    test_upgrade_msvc_handles_unknown_latest_version();
+    test_upgrade_msvc_handles_missing_installation();
+    test_upgrade_without_args_does_not_auto_handle_msvc();
     test_env_rendering();
     test_env_materialization();
     test_exec_usage_error();

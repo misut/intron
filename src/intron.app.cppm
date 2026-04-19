@@ -53,6 +53,39 @@ auto resolved_msvc_environment(intron::RuntimePorts const& ports)
     };
 }
 
+auto resolved_msvc_update_status(intron::RuntimePorts const& ports)
+    -> std::expected<intron::MsvcUpdateStatus, std::string>
+{
+    if (ports.toolchain.msvc_update_status) {
+        return ports.toolchain.msvc_update_status();
+    }
+    return installer::msvc_update_status();
+}
+
+auto resolved_msvc_upgrade(intron::RuntimePorts const& ports)
+    -> std::expected<intron::MsvcUpdateStatus, std::string>
+{
+    if (ports.toolchain.msvc_upgrade) {
+        return ports.toolchain.msvc_upgrade();
+    }
+    return installer::upgrade_msvc();
+}
+
+auto resolved_latest_version(intron::RuntimePorts const& ports, std::string_view tool)
+    -> std::optional<std::string>
+{
+    if (ports.toolchain.latest_version) {
+        return ports.toolchain.latest_version(tool);
+    }
+    return installer::latest_version(tool);
+}
+
+auto add_missing_msvc_result(intron::CommandResult& result) -> void {
+    result.exit_code = 1;
+    result.add_stderr("error: msvc is not installed");
+    result.add_stderr("hint: run 'intron install msvc 2022'");
+}
+
 auto usage_result(int exit_code) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = exit_code,
@@ -379,11 +412,46 @@ auto cmd_use(intron::CommandRequest const& request,
     return result;
 }
 
-auto cmd_update() -> intron::CommandResult {
+auto cmd_update(intron::CommandRequest const& request,
+                intron::RuntimePorts const& ports) -> intron::CommandResult
+{
     auto result = intron::CommandResult{};
+    if (request.args.size() > 1) {
+        result.exit_code = 1;
+        result.add_stderr("Usage: intron update [tool]");
+        return result;
+    }
+
+    if (request.args.size() == 1 && request.args.front() == "msvc") {
+        auto status = resolved_msvc_update_status(ports);
+        if (!status) {
+            result.exit_code = 1;
+            result.add_stderr(std::format("error: {}", status.error()));
+            return result;
+        }
+        if (status->state == intron::MsvcUpdateState::Missing) {
+            add_missing_msvc_result(result);
+            return result;
+        }
+        result.add_stdout(intron::render_msvc_update_status(*status));
+        return result;
+    }
+
     auto current = intron::build_tool_map(
         installer::list_installed(),
         config::load_effective_defaults());
+
+    if (!request.args.empty()) {
+        auto tool = request.args.front();
+        if (!current.contains(tool) || registry::is_system_tool(tool)) {
+            result.exit_code = 1;
+            result.add_stderr(std::format("error: {} is not installed", tool));
+            return result;
+        }
+        auto version = current[tool];
+        current.clear();
+        current[tool] = version;
+    }
 
     auto has_non_system_tools = std::ranges::any_of(current, [](auto const& entry) {
         return !registry::is_system_tool(entry.first);
@@ -394,7 +462,7 @@ auto cmd_update() -> intron::CommandResult {
             if (registry::is_system_tool(tool)) {
                 continue;
             }
-            if (auto latest = installer::latest_version(tool)) {
+            if (auto latest = resolved_latest_version(ports, tool)) {
                 result.add_stdout(std::format("{}: latest {}", tool, *latest));
             }
         }
@@ -406,7 +474,7 @@ auto cmd_update() -> intron::CommandResult {
         if (registry::is_system_tool(tool)) {
             continue;
         }
-        auto status = intron::make_update_status(tool, version, installer::latest_version(tool));
+        auto status = intron::make_update_status(tool, version, resolved_latest_version(ports, tool));
         if (status.state == intron::UpdateState::UpdateAvailable) {
             has_update = true;
         }
@@ -420,8 +488,54 @@ auto cmd_update() -> intron::CommandResult {
     return result;
 }
 
-auto cmd_upgrade(intron::CommandRequest const& request) -> intron::CommandResult {
+auto cmd_upgrade(intron::CommandRequest const& request,
+                 intron::RuntimePorts const& ports) -> intron::CommandResult
+{
     auto result = intron::CommandResult{};
+    if (request.args.size() > 1) {
+        result.exit_code = 1;
+        result.add_stderr("Usage: intron upgrade [tool]");
+        return result;
+    }
+
+    if (request.args.size() == 1 && request.args.front() == "msvc") {
+        auto status = resolved_msvc_update_status(ports);
+        if (!status) {
+            result.exit_code = 1;
+            result.add_stderr(std::format("error: {}", status.error()));
+            return result;
+        }
+        if (status->state == intron::MsvcUpdateState::Missing) {
+            add_missing_msvc_result(result);
+            return result;
+        }
+        if (status->state == intron::MsvcUpdateState::Unknown) {
+            result.exit_code = 1;
+            result.add_stdout(intron::render_msvc_upgrade_check(*status));
+            return result;
+        }
+        if (status->state == intron::MsvcUpdateState::UpToDate) {
+            result.add_stdout(intron::render_msvc_upgrade_check(*status));
+            return result;
+        }
+
+        result.add_stdout(intron::render_msvc_upgrade_check(*status));
+        auto upgraded = resolved_msvc_upgrade(ports);
+        if (!upgraded) {
+            result.exit_code = 1;
+            result.add_stderr(std::format("error: {}", upgraded.error()));
+            return result;
+        }
+        if (upgraded->state != intron::MsvcUpdateState::UpToDate) {
+            result.exit_code = 1;
+            result.add_stderr("error: msvc upgrade did not reach the latest servicing version");
+            return result;
+        }
+        result.add_stdout("");
+        result.add_stdout(std::format("Upgraded msvc to {}", upgraded->current_version));
+        return result;
+    }
+
     auto current = intron::build_tool_map(
         installer::list_installed(),
         config::load_effective_defaults());
@@ -452,7 +566,7 @@ auto cmd_upgrade(intron::CommandRequest const& request) -> intron::CommandResult
         if (registry::is_system_tool(tool)) {
             continue;
         }
-        auto status = intron::make_update_status(tool, version, installer::latest_version(tool));
+        auto status = intron::make_update_status(tool, version, resolved_latest_version(ports, tool));
         if (status.state == intron::UpdateState::Unknown) {
             result.add_stdout(intron::render_upgrade_check(status));
             continue;
@@ -747,9 +861,9 @@ auto run_command(intron::CommandRequest const& request,
     case intron::CommandKind::Use:
         return cmd_use(request, ports);
     case intron::CommandKind::Update:
-        return cmd_update();
+        return cmd_update(request, ports);
     case intron::CommandKind::Upgrade:
-        return cmd_upgrade(request);
+        return cmd_upgrade(request, ports);
     case intron::CommandKind::Env:
         return cmd_env(ports);
     case intron::CommandKind::Exec:

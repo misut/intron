@@ -19,7 +19,10 @@ struct VisualStudioInstance {
     std::filesystem::path installation_path;
     std::string product_id;
     std::string channel_id;
+    std::string channel_uri;
+    std::string installed_channel_uri;
     std::string installation_version;
+    std::string product_display_version;
     std::optional<std::filesystem::path> toolset_root;
     std::optional<std::filesystem::path> vcvars64_path;
     std::optional<std::filesystem::path> cl_path;
@@ -31,6 +34,11 @@ struct VisualStudioInstance {
     auto is_build_tools() const -> bool {
         return product_id == "Microsoft.VisualStudio.Product.BuildTools";
     }
+};
+
+struct VisualStudioChannelVersion {
+    std::string installation_version;
+    std::string display_version;
 };
 
 struct VisualStudioCommand {
@@ -57,6 +65,8 @@ struct VisualStudioInstallerExit {
 };
 
 auto classify_msvc_installer_exit(int exit_code) -> VisualStudioInstallerExit;
+auto parse_visual_studio_channel_version(std::string_view json, std::string_view product_id)
+    -> std::optional<VisualStudioChannelVersion>;
 
 struct MsvcEnvironment {
     std::filesystem::path installation_path;
@@ -66,6 +76,12 @@ struct MsvcEnvironment {
     std::filesystem::path asan_runtime;
     std::map<std::string, std::string> variables;
 };
+
+auto build_msvc_update_command(VisualStudioInstance const& instance,
+                               std::filesystem::path const& setup_path)
+    -> VisualStudioCommand;
+auto msvc_update_status() -> std::expected<intron::MsvcUpdateStatus, std::string>;
+auto upgrade_msvc() -> std::expected<intron::MsvcUpdateStatus, std::string>;
 
 std::filesystem::path intron_home_path(std::filesystem::path const& home_dir) {
     return home_dir / ".intron";
@@ -431,6 +447,29 @@ auto instance_newer(VisualStudioInstance const& lhs, VisualStudioInstance const&
     return lhs.installation_path.string() < rhs.installation_path.string();
 }
 
+auto normalized_display_version(std::string_view version) -> std::string {
+    auto end = std::size_t{0};
+    while (end < version.size()) {
+        auto c = version[end];
+        if ((c >= '0' && c <= '9') || c == '.') {
+            ++end;
+            continue;
+        }
+        break;
+    }
+    if (end == 0) {
+        return std::string{version};
+    }
+    return std::string{version.substr(0, end)};
+}
+
+auto current_display_version(VisualStudioInstance const& instance) -> std::string {
+    if (!instance.product_display_version.empty()) {
+        return normalized_display_version(instance.product_display_version);
+    }
+    return instance.installation_version;
+}
+
 auto find_latest_toolset_in_installation(std::filesystem::path const& installation_path)
     -> std::optional<std::filesystem::path>
 {
@@ -461,14 +500,20 @@ auto find_latest_toolset_in_installation(std::filesystem::path const& installati
 auto make_visual_studio_instance(std::filesystem::path installation_path,
                                  std::string product_id,
                                  std::string channel_id,
-                                 std::string installation_version)
+                                 std::string channel_uri,
+                                 std::string installed_channel_uri,
+                                 std::string installation_version,
+                                 std::string product_display_version)
     -> VisualStudioInstance
 {
     auto instance = VisualStudioInstance{
         .installation_path = std::move(installation_path),
         .product_id = std::move(product_id),
         .channel_id = std::move(channel_id),
+        .channel_uri = std::move(channel_uri),
+        .installed_channel_uri = std::move(installed_channel_uri),
         .installation_version = std::move(installation_version),
+        .product_display_version = std::move(product_display_version),
     };
 
     if (auto toolset = find_latest_toolset_in_installation(instance.installation_path)) {
@@ -535,7 +580,10 @@ auto fallback_detect_msvc_instance() -> std::optional<VisualStudioInstance> {
         installation_path,
         {},
         {},
-        "17.0");
+        {},
+        {},
+        "17.0",
+        {});
     if (!instance.has_msvc()) {
         return std::nullopt;
     }
@@ -715,6 +763,72 @@ auto extract_json_string_field(std::string_view object, std::string_view key)
     return parse_json_string(object, pos);
 }
 
+auto extract_json_array_field(std::string_view object, std::string_view key)
+    -> std::optional<std::string_view>
+{
+    auto needle = std::format("\"{}\"", key);
+    auto key_pos = object.find(needle);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    auto colon = object.find(':', key_pos + needle.size());
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    auto pos = colon + 1;
+    while (pos < object.size() &&
+           std::isspace(static_cast<unsigned char>(object[pos])) != 0) {
+        ++pos;
+    }
+    if (pos >= object.size() || object[pos] != '[') {
+        return std::nullopt;
+    }
+
+    auto in_string = false;
+    auto escape = false;
+    auto depth = 1;
+    auto start = pos + 1;
+    for (auto i = start; i < object.size(); ++i) {
+        auto c = object[i];
+        if (in_string) {
+            if (escape) {
+                escape = false;
+            } else if (c == '\\') {
+                escape = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (c == '[') {
+            ++depth;
+            continue;
+        }
+        if (c == ']') {
+            --depth;
+            if (depth == 0) {
+                return object.substr(start, i - start);
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+auto effective_channel_uri(VisualStudioInstance const& instance) -> std::string {
+    if (!instance.installed_channel_uri.empty()) {
+        return instance.installed_channel_uri;
+    }
+    return instance.channel_uri;
+}
+
 auto capture_vswhere_instances_json(std::filesystem::path const& vswhere_path) -> std::string {
     return capture_stdout({
         .program = vswhere_path.string(),
@@ -811,16 +925,59 @@ auto parse_vswhere_instances(std::string_view json) -> std::vector<VisualStudioI
 
         auto product_id = detail::extract_json_string_field(object, "productId");
         auto channel_id = detail::extract_json_string_field(object, "channelId");
+        auto channel_uri = detail::extract_json_string_field(object, "channelUri");
+        auto installed_channel_uri =
+            detail::extract_json_string_field(object, "installedChannelUri");
         auto installation_version =
             detail::extract_json_string_field(object, "installationVersion");
+        auto product_display_version =
+            detail::extract_json_string_field(object, "productDisplayVersion");
 
         instances.push_back(detail::make_visual_studio_instance(
             std::filesystem::path{*installation_path},
             product_id.value_or(""),
             channel_id.value_or(""),
-            installation_version.value_or("")));
+            channel_uri.value_or(""),
+            installed_channel_uri.value_or(""),
+            installation_version.value_or(""),
+            product_display_version.value_or("")));
     }
     return instances;
+}
+
+auto parse_visual_studio_channel_version(std::string_view json, std::string_view product_id)
+    -> std::optional<VisualStudioChannelVersion>
+{
+    auto display_version = detail::extract_json_string_field(json, "productDisplayVersion");
+    auto channel_items = detail::extract_json_array_field(json, "channelItems");
+    if (!channel_items) {
+        return std::nullopt;
+    }
+
+    for (auto object : detail::split_top_level_json_objects(*channel_items)) {
+        auto id = detail::extract_json_string_field(object, "id");
+        if (!id || *id != product_id) {
+            continue;
+        }
+
+        auto type = detail::extract_json_string_field(object, "type");
+        if (type && *type != "ChannelProduct") {
+            continue;
+        }
+
+        auto version = detail::extract_json_string_field(object, "version");
+        if (!version || version->empty()) {
+            continue;
+        }
+
+        return VisualStudioChannelVersion{
+            .installation_version = *version,
+            .display_version = detail::normalized_display_version(
+                display_version.value_or(*version)),
+        };
+    }
+
+    return std::nullopt;
 }
 
 auto discover_visual_studio_instances() -> std::vector<VisualStudioInstance> {
@@ -894,6 +1051,66 @@ auto select_msvc_modify_target(std::vector<VisualStudioInstance> const& instance
     return best;
 }
 
+namespace detail {
+
+auto fetch_visual_studio_channel_version(VisualStudioInstance const& instance)
+    -> std::optional<VisualStudioChannelVersion>
+{
+    auto channel_uri = effective_channel_uri(instance);
+    if (channel_uri.empty() || instance.product_id.empty()) {
+        return std::nullopt;
+    }
+
+    auto json = net::get_text(channel_uri, net::user_agent_headers(user_agent()));
+    if (!json) {
+        return std::nullopt;
+    }
+
+    return parse_visual_studio_channel_version(*json, instance.product_id);
+}
+
+auto make_msvc_update_status(VisualStudioInstance const& instance,
+                             std::optional<VisualStudioChannelVersion> const& latest)
+    -> intron::MsvcUpdateStatus
+{
+    auto status = intron::MsvcUpdateStatus{
+        .installation_version = instance.installation_version,
+        .current_version = current_display_version(instance),
+    };
+    if (!latest) {
+        status.state = intron::MsvcUpdateState::Unknown;
+        return status;
+    }
+
+    status.latest_installation_version = latest->installation_version;
+    status.latest_version = latest->display_version;
+    if (status.installation_version.empty()) {
+        status.state = intron::MsvcUpdateState::Unknown;
+        return status;
+    }
+
+    status.state =
+        compare_dotted_versions(status.installation_version, latest->installation_version) >= 0
+        ? intron::MsvcUpdateState::UpToDate
+        : intron::MsvcUpdateState::UpdateAvailable;
+    return status;
+}
+
+auto find_instance_by_path(std::vector<VisualStudioInstance> const& instances,
+                           std::filesystem::path const& installation_path)
+    -> std::optional<VisualStudioInstance>
+{
+    auto target = installation_path.lexically_normal().generic_string();
+    for (auto const& instance : instances) {
+        if (instance.installation_path.lexically_normal().generic_string() == target) {
+            return instance;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace detail
+
 auto build_msvc_install_command(registry::ToolInfo const& info,
                                 std::filesystem::path const& bootstrapper)
     -> VisualStudioCommand
@@ -914,6 +1131,23 @@ auto build_msvc_install_command(registry::ToolInfo const& info,
             "--add",
             info.visual_studio->workload_id,
             "--includeRecommended",
+            "--passive",
+            "--wait",
+            "--norestart",
+        },
+    };
+}
+
+auto build_msvc_update_command(VisualStudioInstance const& instance,
+                               std::filesystem::path const& setup_path)
+    -> VisualStudioCommand
+{
+    return {
+        .program = setup_path,
+        .args = {
+            "update",
+            "--installPath",
+            instance.installation_path.string(),
             "--passive",
             "--wait",
             "--norestart",
@@ -1415,6 +1649,98 @@ auto msvc_environment() -> std::optional<MsvcEnvironment> {
         .variables = std::move(*variables),
     };
     return env;
+}
+
+auto msvc_update_status() -> std::expected<intron::MsvcUpdateStatus, std::string> {
+    if constexpr (!detail::is_windows) {
+        return std::unexpected("msvc updates are only supported on Windows");
+    }
+
+    auto instance = detect_ready_msvc_instance();
+    if (!instance) {
+        return intron::MsvcUpdateStatus{
+            .state = intron::MsvcUpdateState::Missing,
+        };
+    }
+
+    return detail::make_msvc_update_status(
+        *instance,
+        detail::fetch_visual_studio_channel_version(*instance));
+}
+
+auto upgrade_msvc() -> std::expected<intron::MsvcUpdateStatus, std::string> {
+    if constexpr (!detail::is_windows) {
+        return std::unexpected("msvc updates are only supported on Windows");
+    }
+
+    auto current = msvc_update_status();
+    if (!current) {
+        return std::unexpected(current.error());
+    }
+    if (current->state == intron::MsvcUpdateState::Missing) {
+        return std::unexpected("msvc is not installed");
+    }
+    if (current->state == intron::MsvcUpdateState::Unknown) {
+        return std::unexpected("could not check latest version for msvc");
+    }
+    if (current->state == intron::MsvcUpdateState::UpToDate) {
+        return *current;
+    }
+
+    auto instance = detect_ready_msvc_instance();
+    if (!instance) {
+        return std::unexpected("msvc is not installed");
+    }
+
+    auto vswhere_path = detail::find_vswhere_path();
+    auto setup_path = detail::find_visual_studio_setup_path(vswhere_path);
+    if (!setup_path) {
+        return std::unexpected(
+            "Visual Studio Installer setup.exe was not found");
+    }
+
+    auto command = build_msvc_update_command(*instance, *setup_path);
+    auto result = detail::run_visual_studio_command(command);
+    if (!result.status.succeeded()) {
+        return std::unexpected(result.status.message);
+    }
+
+    auto refreshed = detail::find_instance_by_path(
+        discover_visual_studio_instances(),
+        instance->installation_path);
+    if (!refreshed) {
+        return std::unexpected(
+            "Visual Studio installer completed but the MSVC instance was not detected");
+    }
+
+    auto latest_target = current->latest_installation_version;
+    auto refreshed_status = detail::make_msvc_update_status(
+        *refreshed,
+        detail::fetch_visual_studio_channel_version(*refreshed));
+    if (!latest_target || refreshed_status.installation_version.empty() ||
+        detail::compare_dotted_versions(
+            refreshed_status.installation_version,
+            *latest_target) < 0) {
+        return std::unexpected(std::format(
+            "msvc update completed but the installed version is still {}",
+            refreshed_status.current_version.empty()
+                ? refreshed_status.installation_version
+                : refreshed_status.current_version));
+    }
+
+    refreshed_status.state = intron::MsvcUpdateState::UpToDate;
+    refreshed_status.installation_version = *latest_target;
+    refreshed_status.latest_installation_version = latest_target;
+    if (!refreshed_status.latest_version && current->latest_version) {
+        refreshed_status.latest_version = current->latest_version;
+    }
+    if (refreshed_status.current_version.empty()) {
+        refreshed_status.current_version =
+            refreshed_status.latest_version.value_or(*latest_target);
+    } else if (refreshed_status.latest_version) {
+        refreshed_status.current_version = *refreshed_status.latest_version;
+    }
+    return refreshed_status;
 }
 
 auto latest_version(std::string_view tool) -> std::optional<std::string> {

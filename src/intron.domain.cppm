@@ -81,6 +81,21 @@ struct UpdateStatus {
     UpdateState state = UpdateState::Unknown;
 };
 
+enum class MsvcUpdateState {
+    Missing,
+    UpToDate,
+    UpdateAvailable,
+    Unknown,
+};
+
+struct MsvcUpdateStatus {
+    std::string installation_version;
+    std::optional<std::string> latest_installation_version;
+    std::string current_version;
+    std::optional<std::string> latest_version;
+    MsvcUpdateState state = MsvcUpdateState::Missing;
+};
+
 struct DownloadPlan {
     std::string url;
     std::filesystem::path archive_path;
@@ -138,6 +153,9 @@ struct MsvcEnvironment {
 
 struct ToolchainPort {
     std::function<std::optional<MsvcEnvironment>()> msvc_environment;
+    std::function<std::optional<std::string>(std::string_view)> latest_version;
+    std::function<std::expected<MsvcUpdateStatus, std::string>()> msvc_update_status;
+    std::function<std::expected<MsvcUpdateStatus, std::string>()> msvc_upgrade;
 };
 
 struct ClockPort {
@@ -247,7 +265,7 @@ inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
         "  which   <binary>                       Print path to binary",
         "  default <tool> <version> [--platform <name>]  Set global default version",
         "  use     [tool] [version] [--platform <name>]  Set project toolchain in .intron.toml",
-        "  update                                 Check for updates",
+        "  update [tool]                          Check for updates",
         "  upgrade [tool]                         Upgrade tools to latest",
         "  env                                    Print environment variables",
         "  exec    -- <command> [args...]         Run a command with intron environment",
@@ -345,6 +363,43 @@ inline auto render_upgrade_check(UpdateStatus const& status) -> std::string {
         return std::format(
             "{} {} -> {}...",
             status.tool,
+            status.current_version,
+            *status.latest_version);
+    }
+    return {};
+}
+
+inline auto render_msvc_update_status(MsvcUpdateStatus const& status) -> std::string {
+    switch (status.state) {
+    case MsvcUpdateState::Missing:
+        return "msvc: not installed";
+    case MsvcUpdateState::Unknown:
+        if (status.current_version.empty()) {
+            return "msvc: could not check latest";
+        }
+        return std::format("msvc {}: could not check latest", status.current_version);
+    case MsvcUpdateState::UpToDate:
+        return std::format("msvc {} (up to date)", status.current_version);
+    case MsvcUpdateState::UpdateAvailable:
+        return std::format(
+            "msvc {} -> {} (update available)",
+            status.current_version,
+            *status.latest_version);
+    }
+    return {};
+}
+
+inline auto render_msvc_upgrade_check(MsvcUpdateStatus const& status) -> std::string {
+    switch (status.state) {
+    case MsvcUpdateState::Missing:
+        return "msvc: not installed";
+    case MsvcUpdateState::Unknown:
+        return "msvc: could not check latest version";
+    case MsvcUpdateState::UpToDate:
+        return std::format("msvc {} (up to date)", status.current_version);
+    case MsvcUpdateState::UpdateAvailable:
+        return std::format(
+            "msvc {} -> {}...",
             status.current_version,
             *status.latest_version);
     }

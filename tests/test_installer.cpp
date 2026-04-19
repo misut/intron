@@ -159,7 +159,12 @@ void test_parse_vswhere_instances() {
         "installationPath": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools",
         "productId": "Microsoft.VisualStudio.Product.BuildTools",
         "channelId": "VisualStudio.17.Release",
-        "installationVersion": "17.14.36015.10"
+        "channelUri": "https://aka.ms/vs/17/release/channel",
+        "installedChannelUri": "https://aka.ms/vs/17/release/channel",
+        "installationVersion": "17.14.36015.10",
+        "catalog": {
+          "productDisplayVersion": "17.14.9"
+        }
       },
       {
         "installationPath": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
@@ -178,8 +183,14 @@ void test_parse_vswhere_instances() {
               "vswhere parser reads product id");
         check(instances[0].channel_id == "VisualStudio.17.Release",
               "vswhere parser reads channel id");
+        check(instances[0].channel_uri == "https://aka.ms/vs/17/release/channel",
+              "vswhere parser reads channel uri");
+        check(instances[0].installed_channel_uri == "https://aka.ms/vs/17/release/channel",
+              "vswhere parser reads installed channel uri");
         check(instances[0].installation_version == "17.14.36015.10",
               "vswhere parser reads installation version");
+        check(instances[0].product_display_version == "17.14.9",
+              "vswhere parser reads display version");
     }
 }
 
@@ -192,7 +203,10 @@ auto fake_instance(std::string install_path,
         .installation_path = std::filesystem::path{install_path},
         .product_id = std::move(product_id),
         .channel_id = "VisualStudio.17.Release",
+        .channel_uri = "https://aka.ms/vs/17/release/channel",
+        .installed_channel_uri = "https://aka.ms/vs/17/release/channel",
         .installation_version = std::move(installation_version),
+        .product_display_version = "17.14.9",
     };
     if (ready) {
         instance.toolset_root = instance.installation_path / "VC" / "Tools" / "MSVC" / "14.44.35207";
@@ -213,6 +227,83 @@ void test_select_ready_msvc_instance() {
     if (selected) {
         check(selected->is_build_tools(), "build tools instance wins over ready IDE instance");
     }
+}
+
+void test_parse_visual_studio_channel_version() {
+    auto json = R"({
+      "info": {
+        "productDisplayVersion": "17.14.30"
+      },
+      "channelItems": [
+        {
+          "id": "Microsoft.VisualStudio.Product.BuildTools",
+          "version": "17.14.37203.1",
+          "type": "ChannelProduct"
+        },
+        {
+          "id": "Microsoft.VisualStudio.Product.Community",
+          "version": "17.14.37203.1",
+          "type": "ChannelProduct"
+        }
+      ]
+    })";
+
+    auto build_tools = installer::parse_visual_studio_channel_version(
+        json,
+        "Microsoft.VisualStudio.Product.BuildTools");
+    check(build_tools.has_value(), "channel parser finds BuildTools product");
+    if (build_tools) {
+        check(build_tools->installation_version == "17.14.37203.1",
+              "channel parser reads product installation version");
+        check(build_tools->display_version == "17.14.30",
+              "channel parser reads display version");
+    }
+
+    auto community = installer::parse_visual_studio_channel_version(
+        json,
+        "Microsoft.VisualStudio.Product.Community");
+    check(community.has_value(), "channel parser finds Community product");
+
+    auto missing = installer::parse_visual_studio_channel_version(
+        json,
+        "Microsoft.VisualStudio.Product.Enterprise");
+    check(!missing.has_value(), "channel parser returns nullopt for missing product");
+
+    auto malformed = installer::parse_visual_studio_channel_version(
+        R"({"info":{"productDisplayVersion":"17.14.30"}})",
+        "Microsoft.VisualStudio.Product.BuildTools");
+    check(!malformed.has_value(), "channel parser returns nullopt when channelItems is missing");
+}
+
+void test_make_msvc_update_status() {
+    auto current = fake_instance(
+        "C:/VS/BuildTools",
+        "Microsoft.VisualStudio.Product.BuildTools",
+        "17.14.36310.24",
+        true);
+    current.product_display_version = "17.14.9";
+
+    auto latest = installer::VisualStudioChannelVersion{
+        .installation_version = "17.14.37203.1",
+        .display_version = "17.14.30",
+    };
+
+    auto status = installer::detail::make_msvc_update_status(current, latest);
+    check(status.state == intron::MsvcUpdateState::UpdateAvailable,
+          "msvc status reports update when channel version is newer");
+    check(status.current_version == "17.14.9", "msvc status keeps current display version");
+    check(status.latest_version == std::optional<std::string>{"17.14.30"},
+          "msvc status exposes latest display version");
+
+    current.installation_version = "17.14.37203.1";
+    current.product_display_version = "17.14.30";
+    auto up_to_date = installer::detail::make_msvc_update_status(current, latest);
+    check(up_to_date.state == intron::MsvcUpdateState::UpToDate,
+          "msvc status reports up-to-date when versions match");
+
+    auto unknown = installer::detail::make_msvc_update_status(current, std::nullopt);
+    check(unknown.state == intron::MsvcUpdateState::Unknown,
+          "msvc status reports unknown when channel data is unavailable");
 }
 
 void test_select_msvc_modify_target() {
@@ -281,6 +372,31 @@ void test_build_msvc_modify_command() {
     check(joined.contains("C:/VS/Community"), "modify command targets instance install path");
     check(joined.contains("Microsoft.VisualStudio.Workload.VCTools"),
           "modify command adds VCTools workload");
+}
+
+void test_build_msvc_update_command() {
+    auto instance = fake_instance(
+        "C:/VS/BuildTools",
+        "Microsoft.VisualStudio.Product.BuildTools",
+        "17.14.1",
+        true);
+    auto command = installer::build_msvc_update_command(
+        instance,
+        "C:/Program Files (x86)/Microsoft Visual Studio/Installer/setup.exe");
+
+    check(command.program.generic_string().ends_with("setup.exe"),
+          "update command uses setup.exe");
+    auto joined = std::string{};
+    for (auto const& arg : command.args) {
+        joined += arg;
+        joined += '\n';
+    }
+    check(joined.contains("update"), "update command uses update verb");
+    check(joined.contains("--installPath"), "update command includes install path");
+    check(joined.contains("C:/VS/BuildTools"), "update command targets selected instance");
+    check(joined.contains("--passive"), "update command uses passive mode");
+    check(joined.contains("--wait"), "update command waits for completion");
+    check(joined.contains("--norestart"), "update command disables auto restart");
 }
 
 void test_classify_msvc_installer_exit() {
@@ -438,10 +554,13 @@ int main() {
     test_selected_backend_from_env();
     test_selected_backend_from_string();
     test_parse_vswhere_instances();
+    test_parse_visual_studio_channel_version();
+    test_make_msvc_update_status();
     test_select_ready_msvc_instance();
     test_select_msvc_modify_target();
     test_build_msvc_install_command();
     test_build_msvc_modify_command();
+    test_build_msvc_update_command();
     test_classify_msvc_installer_exit();
     test_msvc_helper_paths();
     test_msvc_binary_path();

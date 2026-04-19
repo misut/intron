@@ -422,6 +422,15 @@ auto make_runtime_ports() -> intron::RuntimePorts {
             .variables = env->variables,
         };
     };
+    ports.toolchain.latest_version = [](std::string_view tool) {
+        return installer::latest_version(tool);
+    };
+    ports.toolchain.msvc_update_status = [] {
+        return installer::msvc_update_status();
+    };
+    ports.toolchain.msvc_upgrade = [] {
+        return installer::upgrade_msvc();
+    };
     ports.clock.sleep_for = [](std::chrono::milliseconds duration) {
         std::this_thread::sleep_for(duration);
     };
