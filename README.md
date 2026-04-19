@@ -182,10 +182,18 @@ instead of `eval "$(intron env)"`.
 | `intron use [tool] [version] [--platform <name>]` | Set project toolchain in `.intron.toml` |
 | `intron env` | Print environment variables (`eval "$(intron env)"` or PowerShell `Invoke-Expression ((intron env) -join "`n")`) |
 | `intron exec -- <command> [args...]` | Run a command with the resolved intron environment |
-| `intron update` | Check for newer versions |
+| `intron update [tool]` | Check for newer versions |
 | `intron upgrade [tool]` | Upgrade tools to latest |
 | `intron self-update` | Update intron itself |
 | `intron help` | Show usage information |
+
+For MSVC on Windows, `intron install msvc 2022` keeps its provisioning role: it
+ensures that a compatible Visual Studio 2022 / Build Tools 2022 instance has the
+C++ workload and can be used by `intron env` / `intron exec`.
+
+Use `intron update msvc` to compare the single MSVC instance currently selected by
+intron against that instance's configured update channel, and `intron upgrade msvc`
+to apply the available servicing update to that same selected instance.
 
 ## Supported Tools
 
