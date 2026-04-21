@@ -272,7 +272,7 @@ inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
         "  self-update                            Update intron itself",
         "  help                                   Show this message",
         "",
-        "Tools: cmake, llvm, msvc, ninja, wasi-sdk, wasmtime",
+        "Tools: android-ndk, cmake, llvm, msvc, ninja, wasi-sdk, wasmtime",
         "",
         "Options:",
         "  --platform <name>  Target a specific platform section (linux, macos, windows)",

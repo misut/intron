@@ -653,7 +653,7 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
 
     std::vector<std::string> path_entries;
     for (auto const& [tool, version] : defaults) {
-        if (tool == "wasi-sdk" || tool == "msvc") {
+        if (tool == "wasi-sdk" || tool == "msvc" || tool == "android-ndk") {
             continue;
         }
         if (registry::is_system_tool(tool)) {
