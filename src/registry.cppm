@@ -86,6 +86,20 @@ std::string normalize_requested_version(std::string_view tool, std::string_view 
             "hint: intron currently supports '2022' (or 'latest') for msvc",
             version));
     }
+    if (tool == "android-ndk") {
+        if (version == "latest") {
+            throw std::runtime_error(
+                "android-ndk does not support 'latest'; specify a release like 'r30-beta1'.\n"
+                "hint: see https://developer.android.com/ndk/downloads for current releases");
+        }
+        static std::regex const pattern{R"(^r\d+([a-z]|-(beta|rc)\d+)?$)"};
+        if (!std::regex_match(std::string{version}, pattern)) {
+            throw std::runtime_error(std::format(
+                "invalid android-ndk version: {}\n"
+                "hint: expected 'r<num>[<letter>|-beta<n>|-rc<n>]' (e.g. 'r30-beta1', 'r27c')",
+                version));
+        }
+    }
     return std::string{version};
 }
 
@@ -267,6 +281,36 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
         };
     }
 
+    if (tool == "android-ndk") {
+        std::string_view os_str;
+        switch (plat.os) {
+        case OS::macOS:
+            os_str = "darwin";
+            break;
+        case OS::Linux:
+            if (plat.arch != Arch::X64) {
+                throw std::runtime_error(
+                    "android-ndk does not provide ARM64 Linux binaries.\n"
+                    "hint: Google ships Linux NDK as x86_64 only");
+            }
+            os_str = "linux";
+            break;
+        case OS::Windows:
+            os_str = "windows";
+            break;
+        }
+        auto dirname = std::format("android-ndk-{}", normalized_version);
+        auto filename = std::format("{}-{}.zip", dirname, os_str);
+        return {
+            .name = std::string{tool},
+            .version = normalized_version,
+            .url = std::format(
+                "https://dl.google.com/android/repository/{}", filename),
+            .archive_type = "zip",
+            .strip_prefix = dirname,
+        };
+    }
+
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
@@ -289,10 +333,16 @@ std::string latest_release_api(std::string_view tool) {
     if (tool == "intron") {
         return "https://api.github.com/repos/misut/intron/releases/latest";
     }
+    if (tool == "android-ndk") {
+        throw std::runtime_error(
+            "android-ndk has no release API; pin an explicit version like 'r30-beta1'.\n"
+            "hint: see https://developer.android.com/ndk/downloads for current releases");
+    }
     throw std::runtime_error(std::format("unknown tool: {}", tool));
 }
 
-constexpr std::array<std::string_view, 6> supported_tools = {
+constexpr std::array<std::string_view, 7> supported_tools = {
+    "android-ndk",
     "cmake",
     "llvm",
     "msvc",

@@ -89,6 +89,38 @@ void test_latest_release_api() {
 
     auto intron = registry::latest_release_api("intron");
     check(intron.contains("misut/intron"), "intron api url");
+
+    bool threw = false;
+    try {
+        (void)registry::latest_release_api("android-ndk");
+    } catch (std::runtime_error const&) {
+        threw = true;
+    }
+    check(threw, "android-ndk latest_release_api throws (no release API)");
+}
+
+void test_resolve_android_ndk() {
+    auto plat = registry::detect_platform();
+    if (plat.os == registry::OS::Linux && plat.arch == registry::Arch::ARM64) {
+        bool threw = false;
+        try {
+            registry::resolve("android-ndk", "r30-beta1");
+        } catch (std::runtime_error const&) {
+            threw = true;
+        }
+        check(threw, "android-ndk ARM64 Linux throws");
+        return;
+    }
+    auto info = registry::resolve("android-ndk", "r30-beta1");
+    check(info.name == "android-ndk", "android-ndk name");
+    check(info.version == "r30-beta1", "android-ndk version");
+    check(info.archive_type == "zip", "android-ndk archive_type");
+    check(info.url.starts_with("https://dl.google.com/android/repository/"),
+          "android-ndk url hosted on dl.google.com");
+    check(info.url.contains("android-ndk-r30-beta1-"), "android-ndk url contains version");
+    check(info.url.ends_with(".zip"), "android-ndk url ends with .zip");
+    check(info.strip_prefix == "android-ndk-r30-beta1", "android-ndk strip_prefix");
+    check(info.checksum_url.empty(), "android-ndk has no checksum url");
 }
 
 void test_resolve_msvc() {
@@ -129,6 +161,24 @@ void test_normalize_requested_version() {
         threw = true;
     }
     check(threw, "unsupported msvc version throws");
+
+    check(registry::normalize_requested_version("android-ndk", "r30-beta1") == "r30-beta1",
+          "android-ndk r30-beta1 accepted");
+    check(registry::normalize_requested_version("android-ndk", "r27c") == "r27c",
+          "android-ndk r27c accepted");
+    check(registry::normalize_requested_version("android-ndk", "r29-rc1") == "r29-rc1",
+          "android-ndk r29-rc1 accepted");
+
+    for (auto bad : {"latest", "30-beta1", "r30-alpha1", "r30.1", "R30"}) {
+        bool threw_ndk = false;
+        try {
+            (void)registry::normalize_requested_version("android-ndk", bad);
+        } catch (std::runtime_error const&) {
+            threw_ndk = true;
+        }
+        check(threw_ndk,
+              std::format("android-ndk rejects invalid version: {}", bad));
+    }
 }
 
 void test_platform_name() {
@@ -163,6 +213,7 @@ int main() {
     test_resolve_cmake();
     test_resolve_ninja();
     test_resolve_wasi_sdk();
+    test_resolve_android_ndk();
     test_resolve_msvc();
     test_normalize_requested_version();
     test_platform_name();
