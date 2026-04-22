@@ -156,6 +156,8 @@ struct ToolchainPort {
     std::function<std::optional<std::string>(std::string_view)> latest_version;
     std::function<std::expected<MsvcUpdateStatus, std::string>()> msvc_update_status;
     std::function<std::expected<MsvcUpdateStatus, std::string>()> msvc_upgrade;
+    std::function<std::vector<std::filesystem::path>(std::optional<std::string>)>
+        windows_sdk_bin_dirs;
 };
 
 struct ClockPort {

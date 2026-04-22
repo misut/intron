@@ -179,6 +179,23 @@ std::optional<std::string> get_default(std::string_view tool) {
     return std::nullopt;
 }
 
+std::optional<std::string> get_windows_sdk_pin() {
+    auto path = find_project_config();
+    if (!path) {
+        return std::nullopt;
+    }
+    auto document = load_document(*path, "toolchain");
+    auto it = document.platforms.find("windows");
+    if (it == document.platforms.end()) {
+        return std::nullopt;
+    }
+    auto key_it = it->second.find("sdk");
+    if (key_it == it->second.end() || key_it->second.empty()) {
+        return std::nullopt;
+    }
+    return key_it->second;
+}
+
 std::map<std::string, std::string> load_effective_defaults() {
     auto defaults = load_defaults();
     for (auto const& [tool, version] : load_project_toolchain()) {

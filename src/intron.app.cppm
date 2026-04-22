@@ -672,6 +672,13 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
     }
     if (msvc_env) {
         path_entries.push_back(msvc_env->bin_dir.string());
+        if (ports.toolchain.windows_sdk_bin_dirs) {
+            auto pinned = config::get_windows_sdk_pin();
+            for (auto const& dir :
+                 ports.toolchain.windows_sdk_bin_dirs(std::move(pinned))) {
+                path_entries.push_back(dir.string());
+            }
+        }
     }
 
 #ifdef _WIN32
