@@ -40,21 +40,19 @@ Requires [exon](https://github.com/misut/exon) and a C++23 toolchain with
 `import std;` support (clang with libc++ modules).
 
 ```sh
-# macOS — self-host with intron:
+# macOS and Linux — self-host with intron:
 curl -fsSL https://raw.githubusercontent.com/misut/intron/main/install.sh | sh
 git clone git@github.com:misut/intron.git && cd intron
 intron install
 eval "$(intron env)"
 exon build --release
-
-# Linux (Ubuntu 24.04) — use apt LLVM 20 (modules are not available in
-# LLVM's pre-built Linux tarballs yet):
-wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 20
-sudo apt-get install -y libc++-20-dev libc++abi-20-dev ninja-build
-pip install cmake --break-system-packages
-export PATH="/usr/lib/llvm-20/bin:$PATH"
-exon build --release
 ```
+
+The Linux self-host flow relies on the `share/libc++/v1/std.cppm` module
+that ships in the official `LLVM-<version>-Linux-X64.tar.xz` tarball,
+together with the `-stdlib=libc++` / rpath flags that
+`intron install llvm` writes into `etc/clang/<target>.cfg`. No
+distribution-level libc++ package is required.
 
 The binary will be at `.exon/release/intron`.
 
