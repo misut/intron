@@ -168,6 +168,34 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 
+add_executable(test-test_env_output_modes)
+target_sources(test-test_env_output_modes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_env_output_modes.cpp
+)
+target_link_libraries(test-test_env_output_modes PRIVATE
+    intron-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(test-test_env_output_modes PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(test-test_env_output_modes PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()
+
 add_executable(test-test_env_windows_sdk)
 target_sources(test-test_env_windows_sdk PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_env_windows_sdk.cpp

@@ -179,6 +179,39 @@ intron exec -- exon test
 On Windows PowerShell, use `Invoke-Expression ((intron env) -join "`n")`
 instead of `eval "$(intron env)"`.
 
+### Output modes
+
+`intron env` supports two additive output modes for cases where the default
+shell-eval form is unwanted (for example, GitHub Actions, where reassigning
+`PATH` via `Invoke-Expression` would freeze it at eval time and mask later
+`$GITHUB_PATH` updates).
+
+- `intron env` (default) — shell-eval form (`export KEY="..."` or
+  `$env:KEY = "..."`). Intended for `eval "$(intron env)"` /
+  `Invoke-Expression`. Unchanged from previous releases.
+- `intron env --path-only` (alias `intron env --additive`) — emits every
+  segment intron would prepend to `PATH`, one directory per line, with no
+  quoting and no variable references. Non-`PATH` variables are suppressed.
+  Pipe directly into `$GITHUB_PATH` on GitHub Actions:
+
+  ```powershell
+  intron env --path-only | ForEach-Object { $_ >> $env:GITHUB_PATH }
+  ```
+
+- `intron env --github` — emits `path=<dir>` for every `PATH` segment and
+  `env=<KEY>=<value>` for every other variable. Route the two streams with a
+  single-pass switch:
+
+  ```powershell
+  intron env --github | ForEach-Object {
+    if ($_ -match '^path=(.+)$')    { $matches[1] >> $env:GITHUB_PATH }
+    elseif ($_ -match '^env=(.+)$') { $matches[1] >> $env:GITHUB_ENV }
+  }
+  ```
+
+`intron exec -- <command>` is unaffected; it always injects the resolved
+variables directly into the child process environment.
+
 ## Commands
 
 | Command | Description |
@@ -189,7 +222,7 @@ instead of `eval "$(intron env)"`.
 | `intron which <binary>` | Print absolute path to a binary |
 | `intron default <tool> <version> [--platform <name>]` | Set global default version |
 | `intron use [tool] [version] [--platform <name>]` | Set project toolchain in `.intron.toml` |
-| `intron env` | Print environment variables (`eval "$(intron env)"` or PowerShell `Invoke-Expression ((intron env) -join "`n")`) |
+| `intron env [--path-only\|--github]` | Print environment variables (`eval "$(intron env)"` or PowerShell `Invoke-Expression ((intron env) -join "`n")`) |
 | `intron exec -- <command> [args...]` | Run a command with the resolved intron environment |
 | `intron update [tool]` | Check for newer versions |
 | `intron upgrade [tool]` | Upgrade tools to latest |

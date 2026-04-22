@@ -68,6 +68,12 @@ struct EnvPlan {
     std::vector<EnvAssignment> assignments;
 };
 
+enum class EnvOutputMode {
+    ShellEval,
+    PathOnly,
+    GitHub,
+};
+
 enum class UpdateState {
     UpToDate,
     UpdateAvailable,
@@ -254,6 +260,42 @@ inline auto parse_exec_args(std::vector<std::string> const& args)
     return std::vector<std::string>{args.begin() + 1, args.end()};
 }
 
+inline auto parse_env_flags(std::vector<std::string> const& args)
+    -> std::expected<EnvOutputMode, std::string>
+{
+    auto mode = std::optional<EnvOutputMode>{};
+    auto set_mode = [&](EnvOutputMode candidate, std::string_view flag)
+        -> std::expected<void, std::string>
+    {
+        if (mode && *mode != candidate) {
+            return std::unexpected(std::format(
+                "conflicting env output flag '{}'", flag));
+        }
+        mode = candidate;
+        return {};
+    };
+    for (auto const& arg : args) {
+        if (arg == "--path-only" || arg == "--additive") {
+            if (auto r = set_mode(EnvOutputMode::PathOnly, arg); !r) {
+                return std::unexpected(std::move(r.error()));
+            }
+            continue;
+        }
+        if (arg == "--github") {
+            if (auto r = set_mode(EnvOutputMode::GitHub, arg); !r) {
+                return std::unexpected(std::move(r.error()));
+            }
+            continue;
+        }
+        if (arg.starts_with("--")) {
+            return std::unexpected(std::format("unknown flag '{}' for env", arg));
+        }
+        return std::unexpected(std::format(
+            "unexpected positional argument '{}' for env", arg));
+    }
+    return mode.value_or(EnvOutputMode::ShellEval);
+}
+
 inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
     return {
         std::format("intron {}", version),
@@ -269,7 +311,7 @@ inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
         "  use     [tool] [version] [--platform <name>]  Set project toolchain in .intron.toml",
         "  update [tool]                          Check for updates",
         "  upgrade [tool]                         Upgrade tools to latest",
-        "  env                                    Print environment variables",
+        "  env [--path-only|--github]             Print environment variables",
         "  exec    -- <command> [args...]         Run a command with intron environment",
         "  self-update                            Update intron itself",
         "  help                                   Show this message",
@@ -452,10 +494,63 @@ inline auto build_env_plan(
     return plan;
 }
 
-inline auto render_env_lines(EnvPlan const& plan, bool is_windows)
+inline auto split_path_value(std::string_view value, bool is_windows)
     -> std::vector<std::string>
 {
+    auto sep = is_windows ? ';' : ':';
+    auto segments = std::vector<std::string>{};
+    auto start = std::size_t{0};
+    while (start <= value.size()) {
+        auto end = value.find(sep, start);
+        auto piece_end = end == std::string_view::npos ? value.size() : end;
+        if (piece_end > start) {
+            segments.emplace_back(value.substr(start, piece_end - start));
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return segments;
+}
+
+inline auto render_env_lines(EnvPlan const& plan,
+                             bool is_windows,
+                             EnvOutputMode mode) -> std::vector<std::string>
+{
     auto lines = std::vector<std::string>{};
+    if (mode == EnvOutputMode::PathOnly) {
+        for (auto const& assignment : plan.assignments) {
+            if (assignment.key != "PATH" || !assignment.append_existing) {
+                continue;
+            }
+            for (auto& segment : split_path_value(assignment.value, is_windows)) {
+                lines.push_back(std::move(segment));
+            }
+        }
+        return lines;
+    }
+    if (mode == EnvOutputMode::GitHub) {
+        for (auto const& assignment : plan.assignments) {
+            if (assignment.key == "PATH" && assignment.append_existing) {
+                for (auto& segment :
+                     split_path_value(assignment.value, is_windows)) {
+                    lines.push_back(std::format("path={}", segment));
+                }
+            }
+        }
+        for (auto const& assignment : plan.assignments) {
+            if (assignment.key == "PATH" && assignment.append_existing) {
+                continue;
+            }
+            lines.push_back(std::format(
+                "env={}={}",
+                assignment.key,
+                assignment.value));
+        }
+        return lines;
+    }
+
     for (auto const& assignment : plan.assignments) {
         if (is_windows) {
             if (assignment.append_existing) {
@@ -486,6 +581,12 @@ inline auto render_env_lines(EnvPlan const& plan, bool is_windows)
         }
     }
     return lines;
+}
+
+inline auto render_env_lines(EnvPlan const& plan, bool is_windows)
+    -> std::vector<std::string>
+{
+    return render_env_lines(plan, is_windows, EnvOutputMode::ShellEval);
 }
 
 inline auto find_env_value(
