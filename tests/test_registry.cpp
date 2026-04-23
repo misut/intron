@@ -42,23 +42,30 @@ void test_resolve_cmake() {
 
 void test_resolve_ninja() {
     auto plat = registry::detect_platform();
-    if (plat.os == registry::OS::Linux && plat.arch == registry::Arch::ARM64) {
-        // ARM64 Linux: should throw (no official binaries)
-        bool threw = false;
-        try {
-            registry::resolve("ninja", "1.12.1");
-        } catch (std::runtime_error const&) {
-            threw = true;
-        }
-        check(threw, "ninja ARM64 Linux throws");
-        return;
-    }
     auto info = registry::resolve("ninja", "1.12.1");
     check(info.name == "ninja", "ninja name");
     check(info.version == "1.12.1", "ninja version");
     check(info.archive_type == "zip", "ninja archive_type");
     check(info.url.contains("/v1.12.1/"), "ninja url contains version");
     check(info.strip_prefix.empty(), "ninja strip_prefix empty");
+
+    if (plat.os == registry::OS::Linux && plat.arch == registry::Arch::ARM64) {
+        check(info.url.ends_with("/ninja-linux-aarch64.zip"),
+              "ninja ARM64 Linux uses aarch64 asset");
+    } else if (plat.os == registry::OS::Linux) {
+        check(info.url.ends_with("/ninja-linux.zip"),
+              "ninja x64 Linux uses ninja-linux.zip");
+    } else if (plat.os == registry::OS::Windows &&
+               plat.arch == registry::Arch::ARM64) {
+        check(info.url.ends_with("/ninja-winarm64.zip"),
+              "ninja ARM64 Windows uses winarm64 asset");
+    } else if (plat.os == registry::OS::Windows) {
+        check(info.url.ends_with("/ninja-win.zip"),
+              "ninja x64 Windows uses ninja-win.zip");
+    } else if (plat.os == registry::OS::macOS) {
+        check(info.url.ends_with("/ninja-mac.zip"),
+              "ninja macOS uses ninja-mac.zip");
+    }
 }
 
 
