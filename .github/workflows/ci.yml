@@ -38,27 +38,18 @@ jobs:
           path: ~/.intron/toolchains
           key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.intron.toml') }}
 
-      - name: Install intron (macOS)
-        if: runner.os == 'macOS'
+      - name: Install intron
         run: |
           # Bootstrap from the version pinned in mise.toml so CI understands
           # the current portable .intron.toml layout.
-          gh release download v${{ steps.tool-versions.outputs.intron }} -R misut/intron -p 'intron-*-aarch64-apple-darwin.tar.gz'
+          gh release download v${{ steps.tool-versions.outputs.intron }} -R misut/intron -p "intron-*-${{ matrix.platform }}.tar.gz"
           tar xzf intron-*.tar.gz && sudo mv intron /usr/local/bin/ && rm intron-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Install toolchains (macOS)
-        if: runner.os == 'macOS'
+      - name: Install toolchains
         run: |
           intron install
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 20
-          sudo apt-get install -y libc++-20-dev libc++abi-20-dev ninja-build
-          pip install cmake --break-system-packages
 
       - name: Install exon
         run: |
@@ -74,8 +65,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Verify portable toolchain resolution (macOS)
-        if: runner.os == 'macOS'
+      - name: Verify portable toolchain resolution
         shell: bash
         run: |
           for tool in clang cmake ninja; do
@@ -94,13 +84,14 @@ jobs:
       - name: Build and test (macOS)
         if: runner.os == 'macOS'
         run: |
+          eval "$(intron env)"
           ./.exon-ci build
           ./.exon-ci test
 
       - name: Build and test (Linux)
         if: runner.os == 'Linux'
         run: |
-          export PATH="/usr/lib/llvm-20/bin:$PATH"
+          eval "$(intron env)"
           exon build
           exon test
 
