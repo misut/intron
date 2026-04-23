@@ -82,6 +82,8 @@ auto build_msvc_update_command(VisualStudioInstance const& instance,
     -> VisualStudioCommand;
 auto msvc_update_status() -> std::expected<intron::MsvcUpdateStatus, std::string>;
 auto upgrade_msvc() -> std::expected<intron::MsvcUpdateStatus, std::string>;
+auto discover_windows_sdk_bin_dirs(std::optional<std::string> pinned_version)
+    -> std::vector<std::filesystem::path>;
 
 std::filesystem::path intron_home_path(std::filesystem::path const& home_dir) {
     return home_dir / ".intron";
@@ -1649,6 +1651,95 @@ auto msvc_environment() -> std::optional<MsvcEnvironment> {
         .variables = std::move(*variables),
     };
     return env;
+}
+
+auto discover_windows_sdk_bin_dirs(std::optional<std::string> pinned_version)
+    -> std::vector<std::filesystem::path>
+{
+    if constexpr (!detail::is_windows) {
+        return {};
+    }
+
+    auto candidate_roots = std::vector<std::filesystem::path>{};
+    auto push_root = [&](std::filesystem::path const& root) {
+        std::error_code ec;
+        if (!root.empty() && std::filesystem::is_directory(root, ec)) {
+            if (std::ranges::find(candidate_roots, root) == candidate_roots.end()) {
+                candidate_roots.push_back(root);
+            }
+        }
+    };
+    if (auto const* pf_x86 = std::getenv("ProgramFiles(x86)"); pf_x86 && *pf_x86) {
+        push_root(std::filesystem::path{pf_x86} / "Windows Kits" / "10" / "bin");
+    }
+    if (auto const* pf = std::getenv("ProgramFiles"); pf && *pf) {
+        push_root(std::filesystem::path{pf} / "Windows Kits" / "10" / "bin");
+    }
+    push_root(std::filesystem::path{R"(C:\Program Files (x86)\Windows Kits\10\bin)"});
+    push_root(std::filesystem::path{R"(C:\Program Files\Windows Kits\10\bin)"});
+
+    auto is_sdk_version_name = [](std::string const& name) {
+        if (!name.starts_with("10.")) {
+            return false;
+        }
+        auto dots = 0;
+        for (auto c : name) {
+            if (c == '.') {
+                ++dots;
+            } else if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return dots == 3;
+    };
+
+    auto arch_subdir = std::string{"x64"};
+    if (auto const* proc_arch = std::getenv("PROCESSOR_ARCHITECTURE");
+        proc_arch && std::string_view{proc_arch} == "ARM64") {
+        arch_subdir = "arm64";
+    }
+
+    for (auto const& root : candidate_roots) {
+        auto chosen = std::optional<std::string>{};
+        std::error_code iter_ec;
+        for (auto const& entry : std::filesystem::directory_iterator{root, iter_ec}) {
+            if (iter_ec) {
+                break;
+            }
+            if (!entry.is_directory()) {
+                continue;
+            }
+            auto name = entry.path().filename().string();
+            if (!is_sdk_version_name(name)) {
+                continue;
+            }
+            if (pinned_version) {
+                if (name == *pinned_version) {
+                    chosen = name;
+                    break;
+                }
+                continue;
+            }
+            if (!chosen || detail::compare_dotted_versions(name, *chosen) > 0) {
+                chosen = name;
+            }
+        }
+        if (!chosen) {
+            continue;
+        }
+
+        auto version_dir = root / *chosen;
+        auto arch_dir = version_dir / arch_subdir;
+        std::error_code ec;
+        if (std::filesystem::is_directory(arch_dir, ec)) {
+            return {arch_dir};
+        }
+        if (std::filesystem::is_directory(version_dir, ec)) {
+            return {version_dir};
+        }
+    }
+
+    return {};
 }
 
 auto msvc_update_status() -> std::expected<intron::MsvcUpdateStatus, std::string> {

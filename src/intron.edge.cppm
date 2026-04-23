@@ -422,6 +422,9 @@ auto make_runtime_ports() -> intron::RuntimePorts {
             .variables = env->variables,
         };
     };
+    ports.toolchain.windows_sdk_bin_dirs = [](std::optional<std::string> version) {
+        return installer::discover_windows_sdk_bin_dirs(std::move(version));
+    };
     ports.toolchain.latest_version = [](std::string_view tool) {
         return installer::latest_version(tool);
     };

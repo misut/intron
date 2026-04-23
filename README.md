@@ -124,8 +124,17 @@ intron env
 The output includes:
 
 - `$env:PATH` with the MSVC `Hostx64/x64` bin directory
+- `$env:PATH` also gets the installed Windows 10/11 SDK `bin/<version>/<arch>` directory so `rc.exe`, `mt.exe`, and `signtool.exe` resolve without a separately-opened developer shell
 - `$env:CC` / `$env:CXX` pointing to `cl.exe`
 - `$env:INCLUDE`, `$env:LIB`, and `$env:LIBPATH` from `vcvars64.bat`
+
+The highest installed Windows SDK is picked by default. To pin a specific version, add it under `[toolchain.windows]` in `.intron.toml`:
+
+```toml
+[toolchain.windows]
+msvc = "2022"
+sdk = "10.0.26100.0"
+```
 
 This is intended to make direct execution of MSVC-built tools and Windows ASan binaries work from a regular PowerShell session, not just from a pre-opened Visual Studio developer shell.
 
