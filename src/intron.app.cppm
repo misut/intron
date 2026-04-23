@@ -762,7 +762,21 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
     return plan;
 }
 
-auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
+auto cmd_env(intron::CommandRequest const& request,
+             intron::RuntimePorts const& ports) -> intron::CommandResult
+{
+    auto mode = intron::parse_env_flags(request.args);
+    if (!mode) {
+        auto result = intron::CommandResult{
+            .exit_code = 2,
+        };
+        result.add_stderr(std::format("error: {}", mode.error()));
+        for (auto const& line : intron::usage_lines(intron_version)) {
+            result.add_stdout(line);
+        }
+        return result;
+    }
+
     auto resolved = resolve_env_plan(ports);
     if (!resolved) {
         return resolved.error();
@@ -775,7 +789,8 @@ auto cmd_env(intron::RuntimePorts const& ports) -> intron::CommandResult {
 #endif
 
     auto result = intron::CommandResult{};
-    for (auto const& line : intron::render_env_lines(*resolved, is_windows)) {
+    for (auto const& line :
+         intron::render_env_lines(*resolved, is_windows, *mode)) {
         result.add_stdout(line);
     }
     return result;
@@ -872,7 +887,7 @@ auto run_command(intron::CommandRequest const& request,
     case intron::CommandKind::Upgrade:
         return cmd_upgrade(request, ports);
     case intron::CommandKind::Env:
-        return cmd_env(ports);
+        return cmd_env(request, ports);
     case intron::CommandKind::Exec:
         return cmd_exec(request, ports);
     case intron::CommandKind::Help:
