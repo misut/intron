@@ -261,13 +261,13 @@ ToolInfo resolve(std::string_view tool, std::string_view version) {
         if (plat.os == OS::macOS) {
             filename = "ninja-mac.zip";
         } else if (plat.os == OS::Windows) {
-            filename = "ninja-win.zip";
-        } else if (plat.arch == Arch::ARM64) {
-            throw std::runtime_error(
-                "ninja does not provide ARM64 Linux binaries.\n"
-                "hint: install via system package manager (e.g. apt install ninja-build)");
+            filename = plat.arch == Arch::ARM64
+                ? "ninja-winarm64.zip"
+                : "ninja-win.zip";
         } else {
-            filename = "ninja-linux.zip";
+            filename = plat.arch == Arch::ARM64
+                ? "ninja-linux-aarch64.zip"
+                : "ninja-linux.zip";
         }
         return {
             .name = std::string{tool},
