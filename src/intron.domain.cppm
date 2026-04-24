@@ -1,5 +1,6 @@
 export module intron.domain;
 import std;
+import cppx.terminal;
 import registry;
 
 export namespace intron {
@@ -185,6 +186,62 @@ struct RuntimePorts {
     ConsolePort console;
 };
 
+inline auto terminal_options() -> cppx::terminal::TerminalOptions {
+    return cppx::terminal::TerminalOptions{
+        .color_env = "INTRON_COLOR",
+    };
+}
+
+inline auto status_line(cppx::terminal::StatusKind status,
+                        std::string_view message,
+                        bool color_enabled = false) -> std::string
+{
+    return std::format(
+        "{} {}",
+        cppx::terminal::status_cell(status, color_enabled),
+        message);
+}
+
+inline auto section_line(std::string_view title,
+                         bool color_enabled = false) -> std::string
+{
+    return cppx::terminal::section(title, color_enabled);
+}
+
+inline auto key_value_line(std::string_view key,
+                           std::string_view value,
+                           std::size_t width = 12) -> std::string
+{
+    return cppx::terminal::key_value(key, value, width);
+}
+
+inline auto error_line(std::string_view message,
+                       bool color_enabled = false) -> std::string
+{
+    return std::format(
+        "{} {}",
+        cppx::terminal::style("error:", cppx::terminal::StyleRole::error, color_enabled),
+        message);
+}
+
+inline auto warning_line(std::string_view message,
+                         bool color_enabled = false) -> std::string
+{
+    return std::format(
+        "{} {}",
+        cppx::terminal::style("warning:", cppx::terminal::StyleRole::warning, color_enabled),
+        message);
+}
+
+inline auto hint_line(std::string_view message,
+                      bool color_enabled = false) -> std::string
+{
+    return std::format(
+        "{} {}",
+        cppx::terminal::style("hint:", cppx::terminal::StyleRole::dim, color_enabled),
+        message);
+}
+
 struct ParsedArguments {
     std::vector<std::string> positional;
     std::optional<std::string> platform;
@@ -296,13 +353,16 @@ inline auto parse_env_flags(std::vector<std::string> const& args)
     return mode.value_or(EnvOutputMode::ShellEval);
 }
 
-inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
+inline auto usage_lines(std::string_view version,
+                        bool color_enabled = false) -> std::vector<std::string> {
     return {
-        std::format("intron {}", version),
+        cppx::terminal::style(std::format("intron {}", version),
+                              cppx::terminal::StyleRole::bold,
+                              color_enabled),
         "",
         "Usage: intron <command> [args...]",
         "",
-        "Commands:",
+        section_line("Commands:", color_enabled),
         "  install [tool] [version]               Install toolchain(s) (reads .intron.toml if no args)",
         "  remove  <tool> <version>               Remove a toolchain",
         "  list                                   List installed toolchains",
@@ -316,9 +376,10 @@ inline auto usage_lines(std::string_view version) -> std::vector<std::string> {
         "  self-update                            Update intron itself",
         "  help                                   Show this message",
         "",
-        "Tools: android-ndk, cmake, llvm, msvc, ninja, wasi-sdk, wasmtime",
+        section_line("Tools:", color_enabled),
+        "  android-ndk, cmake, llvm, msvc, ninja, wasi-sdk, wasmtime",
         "",
-        "Options:",
+        section_line("Options:", color_enabled),
         "  --platform <name>  Target a specific platform section (linux, macos, windows)",
     };
 }
@@ -375,77 +436,102 @@ inline auto make_update_status(
     return status;
 }
 
-inline auto render_update_status(UpdateStatus const& status) -> std::string {
+inline auto render_update_status(UpdateStatus const& status,
+                                 bool color_enabled = false) -> std::string {
     switch (status.state) {
     case UpdateState::Unknown:
-        return std::format(
+        return status_line(cppx::terminal::StatusKind::fail, std::format(
             "{} {}: could not check latest",
             status.tool,
-            status.current_version);
+            status.current_version), color_enabled);
     case UpdateState::UpToDate:
-        return std::format(
+        return status_line(cppx::terminal::StatusKind::ok, std::format(
             "{} {} (up to date)",
             status.tool,
-            status.current_version);
+            status.current_version), color_enabled);
     case UpdateState::UpdateAvailable:
-        return std::format(
+        return status_line(cppx::terminal::StatusKind::run, std::format(
             "{} {} -> {} (update available)",
             status.tool,
             status.current_version,
-            *status.latest_version);
+            *status.latest_version), color_enabled);
     }
     return {};
 }
 
-inline auto render_upgrade_check(UpdateStatus const& status) -> std::string {
+inline auto render_upgrade_check(UpdateStatus const& status,
+                                 bool color_enabled = false) -> std::string {
     switch (status.state) {
     case UpdateState::Unknown:
-        return std::format("{}: could not check latest version", status.tool);
+        return status_line(
+            cppx::terminal::StatusKind::fail,
+            std::format("{}: could not check latest version", status.tool),
+            color_enabled);
     case UpdateState::UpToDate:
-        return std::format("{} {} (up to date)", status.tool, status.current_version);
+        return status_line(
+            cppx::terminal::StatusKind::ok,
+            std::format("{} {} (up to date)", status.tool, status.current_version),
+            color_enabled);
     case UpdateState::UpdateAvailable:
-        return std::format(
+        return status_line(cppx::terminal::StatusKind::run, std::format(
             "{} {} -> {}...",
             status.tool,
             status.current_version,
-            *status.latest_version);
+            *status.latest_version), color_enabled);
     }
     return {};
 }
 
-inline auto render_msvc_update_status(MsvcUpdateStatus const& status) -> std::string {
+inline auto render_msvc_update_status(MsvcUpdateStatus const& status,
+                                      bool color_enabled = false) -> std::string {
     switch (status.state) {
     case MsvcUpdateState::Missing:
-        return "msvc: not installed";
+        return status_line(cppx::terminal::StatusKind::fail,
+                           "msvc: not installed",
+                           color_enabled);
     case MsvcUpdateState::Unknown:
         if (status.current_version.empty()) {
-            return "msvc: could not check latest";
+            return status_line(cppx::terminal::StatusKind::fail,
+                               "msvc: could not check latest",
+                               color_enabled);
         }
-        return std::format("msvc {}: could not check latest", status.current_version);
+        return status_line(cppx::terminal::StatusKind::fail,
+                           std::format("msvc {}: could not check latest",
+                                       status.current_version),
+                           color_enabled);
     case MsvcUpdateState::UpToDate:
-        return std::format("msvc {} (up to date)", status.current_version);
+        return status_line(cppx::terminal::StatusKind::ok,
+                           std::format("msvc {} (up to date)", status.current_version),
+                           color_enabled);
     case MsvcUpdateState::UpdateAvailable:
-        return std::format(
+        return status_line(cppx::terminal::StatusKind::run, std::format(
             "msvc {} -> {} (update available)",
             status.current_version,
-            *status.latest_version);
+            *status.latest_version), color_enabled);
     }
     return {};
 }
 
-inline auto render_msvc_upgrade_check(MsvcUpdateStatus const& status) -> std::string {
+inline auto render_msvc_upgrade_check(MsvcUpdateStatus const& status,
+                                      bool color_enabled = false) -> std::string {
     switch (status.state) {
     case MsvcUpdateState::Missing:
-        return "msvc: not installed";
+        return status_line(cppx::terminal::StatusKind::fail,
+                           "msvc: not installed",
+                           color_enabled);
     case MsvcUpdateState::Unknown:
-        return "msvc: could not check latest version";
+        return status_line(cppx::terminal::StatusKind::fail,
+                           "msvc: could not check latest version",
+                           color_enabled);
     case MsvcUpdateState::UpToDate:
-        return std::format("msvc {} (up to date)", status.current_version);
+        return status_line(cppx::terminal::StatusKind::ok,
+                           std::format("msvc {} (up to date)", status.current_version),
+                           color_enabled);
     case MsvcUpdateState::UpdateAvailable:
-        return std::format(
+        return status_line(cppx::terminal::StatusKind::run, std::format(
             "msvc {} -> {}...",
             status.current_version,
-            *status.latest_version);
+            *status.latest_version), color_enabled);
     }
     return {};
 }

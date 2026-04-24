@@ -1,6 +1,8 @@
 import std;
 import cppx.archive;
 import cppx.archive.system;
+import cppx.terminal;
+import cppx.terminal.system;
 import intron.app;
 import intron.domain;
 import intron.edge;
@@ -24,29 +26,42 @@ auto error_result(std::string_view message) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = 1,
     };
-    result.add_stderr(std::format("error: {}", message));
+    result.add_stderr(intron::error_line(
+        message,
+        cppx::terminal::system::stderr_color_enabled(intron::terminal_options())));
     return result;
 }
 
 auto self_update_result(std::string_view self_path) -> intron::CommandResult {
     auto result = intron::CommandResult{};
+    auto stdout_color = cppx::terminal::system::stdout_color_enabled(intron::terminal_options());
+    auto stderr_color = cppx::terminal::system::stderr_color_enabled(intron::terminal_options());
 
-    result.add_stdout("Checking for updates...");
+    result.add_stdout(intron::status_line(
+        cppx::terminal::StatusKind::run,
+        "checking for updates",
+        stdout_color));
     auto latest = installer::latest_version("intron");
     if (!latest) {
         result.exit_code = 1;
-        result.add_stderr("error: could not check latest version");
+        result.add_stderr(intron::error_line("could not check latest version", stderr_color));
         return result;
     }
     if (*latest == intron_version) {
-        result.add_stdout(std::format("intron {} is already up to date", intron_version));
+        result.add_stdout(intron::status_line(
+            cppx::terminal::StatusKind::ok,
+            std::format("intron {} is already up to date", intron_version),
+            stdout_color));
         return result;
     }
 
-    result.add_stdout(std::format(
+    result.add_stdout(intron::status_line(
+        cppx::terminal::StatusKind::run,
+        std::format(
         "Updating intron {} -> {}...",
         intron_version,
-        *latest));
+        *latest),
+        stdout_color));
 
     auto tmp = std::filesystem::temp_directory_path() / "intron-update";
     std::filesystem::create_directories(tmp);
@@ -63,7 +78,7 @@ auto self_update_result(std::string_view self_path) -> intron::CommandResult {
     auto dl = net::download_file(url, archive, net::user_agent_headers(user_agent()));
     if (!dl) {
         result.exit_code = 1;
-        result.add_stderr(std::format("error: {}", dl.error()));
+        result.add_stderr(intron::error_line(dl.error(), stderr_color));
         std::filesystem::remove_all(tmp);
         return result;
     }
@@ -78,7 +93,9 @@ auto self_update_result(std::string_view self_path) -> intron::CommandResult {
     });
     if (!extracted) {
         result.exit_code = 1;
-        result.add_stderr(std::format("error: extraction failed: {}", extracted.error().message));
+        result.add_stderr(intron::error_line(
+            std::format("extraction failed: {}", extracted.error().message),
+            stderr_color));
         std::filesystem::remove_all(tmp);
         return result;
     }
@@ -101,7 +118,10 @@ auto self_update_result(std::string_view self_path) -> intron::CommandResult {
     std::error_code tmp_ec;
     std::filesystem::remove_all(tmp, tmp_ec);
 
-    result.add_stdout(std::format("Updated intron to {}", *latest));
+    result.add_stdout(intron::status_line(
+        cppx::terminal::StatusKind::ok,
+        std::format("Updated intron to {}", *latest),
+        stdout_color));
     return result;
 }
 

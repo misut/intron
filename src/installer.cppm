@@ -9,6 +9,8 @@ import cppx.fs;
 import cppx.fs.system;
 import cppx.process;
 import cppx.process.system;
+import cppx.terminal;
+import cppx.terminal.system;
 import intron.domain;
 import net;
 export import registry;
@@ -130,6 +132,32 @@ auto user_agent() -> std::string {
     return std::format("intron/{}", EXON_PKG_VERSION);
 }
 
+auto stdout_color_enabled() -> bool {
+    return cppx::terminal::system::stdout_color_enabled(intron::terminal_options());
+}
+
+auto stderr_color_enabled() -> bool {
+    return cppx::terminal::system::stderr_color_enabled(intron::terminal_options());
+}
+
+auto print_status(cppx::terminal::StatusKind status,
+                  std::string_view message) -> void
+{
+    std::println("{}", intron::status_line(status, message, stdout_color_enabled()));
+}
+
+auto print_warning(std::string_view message) -> void {
+    std::println("{}", intron::warning_line(message, stdout_color_enabled()));
+}
+
+auto print_error(std::string_view message) -> void {
+    std::println(std::cerr, "{}", intron::error_line(message, stderr_color_enabled()));
+}
+
+auto print_hint(std::string_view message) -> void {
+    std::println(std::cerr, "{}", intron::hint_line(message, stderr_color_enabled()));
+}
+
 auto trim_line_endings(std::string text) -> std::string {
     while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
         text.pop_back();
@@ -249,37 +277,35 @@ auto verify_checksum(std::filesystem::path const& archive,
 {
     auto manifest = net::get_text(checksum_url, net::user_agent_headers(user_agent()));
     if (!manifest) {
-        std::println(
-            "warning: could not download checksum file ({}), skipping verification",
-            manifest.error());
+        print_warning(std::format(
+            "could not download checksum file ({}), skipping verification",
+            manifest.error()));
         return true;
     }
 
     auto expected_hash = cppx::checksum::find_sha256_for_filename(*manifest, archive_name);
     if (!expected_hash) {
-        std::println("warning: checksum entry not found, skipping verification");
+        print_warning("checksum entry not found, skipping verification");
         return true;
     }
 
     auto actual_hash = cppx::checksum::system::sha256_file(archive);
     if (!actual_hash) {
-        std::println(
-            std::cerr,
-            "error: could not calculate checksum: {}",
-            actual_hash.error().message);
+        print_error(std::format(
+            "could not calculate checksum: {}",
+            actual_hash.error().message));
         return false;
     }
 
     if (*actual_hash != *expected_hash) {
-        std::println(
-            std::cerr,
-            "error: checksum mismatch\n  expected: {}\n  actual:   {}",
+        print_error(std::format(
+            "checksum mismatch\n  expected: {}\n  actual:   {}",
             *expected_hash,
-            *actual_hash);
+            *actual_hash));
         return false;
     }
 
-    std::println("Checksum OK");
+    print_status(cppx::terminal::StatusKind::ok, "checksum OK");
     return true;
 }
 
@@ -344,7 +370,8 @@ auto setup_llvm_config(std::filesystem::path const& dest, std::string_view /*ver
             write_clang_wrapper(
                 dest / "bin",
                 std::format("--config-system-dir={}", cfg_dir.string()));
-            std::println("Generated clang config: {}", cfg_file.string());
+            print_status(cppx::terminal::StatusKind::ok,
+                         std::format("generated clang config: {}", cfg_file.string()));
         }
     } else if (plat.os == registry::OS::Linux && !target.empty()) {
         auto lib_dir = dest / "lib" / target;
@@ -370,7 +397,8 @@ auto setup_llvm_config(std::filesystem::path const& dest, std::string_view /*ver
         write_clang_wrapper(
             dest / "bin",
             std::format("--config-system-dir={}", cfg_dir.string()));
-        std::println("Generated clang config: {}", cfg_file.string());
+        print_status(cppx::terminal::StatusKind::ok,
+                     std::format("generated clang config: {}", cfg_file.string()));
     }
 }
 
@@ -397,11 +425,9 @@ auto verify_installed_binary(std::filesystem::path const& dest,
         .args = {"--version"},
     });
     if (!result || result->timed_out || result->exit_code != 0) {
-        std::println(
-            std::cerr,
-            "error: {} binary is not executable on this platform\n"
-            "hint: the downloaded binary may not match your architecture",
-            info.name);
+        print_error(std::format("{} binary is not executable on this platform",
+                                info.name));
+        print_hint("the downloaded binary may not match your architecture");
         return false;
     }
     return true;
@@ -903,7 +929,7 @@ auto run_visual_studio_command(VisualStudioCommand const& command)
 }
 
 auto print_visual_studio_failure(VisualStudioCommandResult const& result) -> void {
-    std::println(std::cerr, "error: {}", result.status.message);
+    print_error(result.status.message);
     if (!result.stderr_text.empty()) {
         std::println(std::cerr, "stderr:");
         std::println(std::cerr, "{}", trim_line_endings(result.stderr_text));
@@ -912,7 +938,7 @@ auto print_visual_studio_failure(VisualStudioCommandResult const& result) -> voi
         std::println(std::cerr, "stdout:");
         std::println(std::cerr, "{}", trim_line_endings(result.stdout_text));
     }
-    std::println(std::cerr, "hint: {}", visual_studio_log_hint());
+    print_hint(visual_studio_log_hint());
 }
 
 } // namespace detail
@@ -1366,17 +1392,20 @@ auto current_msvc_environment() -> std::optional<std::map<std::string, std::stri
 
 auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
     if constexpr (!is_windows) {
-        std::println(std::cerr, "error: msvc provisioning is only supported on Windows");
+        detail::print_error("msvc provisioning is only supported on Windows");
         return false;
     }
 
     if (!info.visual_studio) {
-        std::println(std::cerr, "error: msvc installer metadata is missing");
+        detail::print_error("msvc installer metadata is missing");
         return false;
     }
 
     if (auto ready = detect_ready_msvc_instance()) {
-        std::println("msvc {} ready at {}", info.version, ready->toolset_root->string());
+        detail::print_status(cppx::terminal::StatusKind::ok,
+                             std::format("msvc {} ready at {}",
+                                         info.version,
+                                         ready->toolset_root->string()));
         return true;
     }
 
@@ -1387,16 +1416,14 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
     if (auto modify_target = select_msvc_modify_target(instances)) {
         auto setup_path = find_visual_studio_setup_path(vswhere_path);
         if (!setup_path) {
-            std::println(
-                std::cerr,
-                "error: Visual Studio Installer setup.exe was not found\n"
-                "hint: repair the Visual Studio Installer and retry");
+            detail::print_error("Visual Studio Installer setup.exe was not found");
+            detail::print_hint("repair the Visual Studio Installer and retry");
             return false;
         }
 
-        std::println(
-            "Configuring Visual Studio instance at {}...",
-            modify_target->installation_path.string());
+        detail::print_status(cppx::terminal::StatusKind::run,
+                             std::format("configuring Visual Studio instance at {}",
+                                         modify_target->installation_path.string()));
         auto command = build_msvc_modify_command(info, *modify_target, *setup_path);
         auto result = run_visual_studio_command(command);
         if (!result.status.succeeded()) {
@@ -1408,20 +1435,23 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
     } else {
         auto bootstrapper = cached_msvc_bootstrapper_path(info);
         if (std::filesystem::exists(bootstrapper)) {
-            std::println("Using cached Visual Studio Build Tools bootstrapper...");
+            detail::print_status(cppx::terminal::StatusKind::ok,
+                                 "using cached Visual Studio Build Tools bootstrapper");
         } else {
-            std::println("Downloading Visual Studio Build Tools bootstrapper...");
+            detail::print_status(cppx::terminal::StatusKind::run,
+                                 "downloading Visual Studio Build Tools bootstrapper");
             auto downloaded = net::download_file(
                 info.visual_studio->bootstrapper_url,
                 bootstrapper,
                 net::user_agent_headers(user_agent()));
             if (!downloaded) {
-                std::println(std::cerr, "error: {}", downloaded.error());
+                detail::print_error(downloaded.error());
                 return false;
             }
         }
 
-        std::println("Installing Visual Studio Build Tools 2022...");
+        detail::print_status(cppx::terminal::StatusKind::run,
+                             "installing Visual Studio Build Tools 2022");
         auto command = build_msvc_install_command(info, bootstrapper);
         auto result = run_visual_studio_command(command);
         if (!result.status.succeeded()) {
@@ -1434,18 +1464,19 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
 
     auto ready = detect_ready_msvc_instance();
     if (!ready) {
-        std::println(
-            std::cerr,
-            "error: Visual Studio installer completed but MSVC was not detected");
-        std::println(std::cerr, "hint: {}", visual_studio_log_hint());
+        detail::print_error("Visual Studio installer completed but MSVC was not detected");
+        detail::print_hint(visual_studio_log_hint());
         return false;
     }
 
     if (restart_required) {
-        std::println(
-            "warning: Visual Studio Build Tools requested a reboot before the toolchain is fully ready");
+        detail::print_warning(
+            "Visual Studio Build Tools requested a reboot before the toolchain is fully ready");
     }
-    std::println("msvc {} ready at {}", info.version, ready->toolset_root->string());
+    detail::print_status(cppx::terminal::StatusKind::ok,
+                         std::format("msvc {} ready at {}",
+                                     info.version,
+                                     ready->toolset_root->string()));
     return true;
 }
 
@@ -1455,7 +1486,7 @@ auto install_system_tool(registry::ToolInfo const& info) -> bool {
     if (info.name == "msvc") {
         return detail::ensure_msvc_available(info);
     }
-    std::println(std::cerr, "error: unknown system tool: {}", info.name);
+    detail::print_error(std::format("unknown system tool: {}", info.name));
     return false;
 }
 
@@ -1472,12 +1503,15 @@ auto install(registry::ToolInfo const& info) -> bool {
     auto dest = plan.dest;
 
     if (std::filesystem::exists(dest) && !std::filesystem::is_empty(dest)) {
-        std::println("{} {} is already installed", info.name, info.version);
+        detail::print_status(cppx::terminal::StatusKind::ok,
+                             std::format("{} {} is already installed",
+                                         info.name,
+                                         info.version));
         return true;
     }
 
     if (!plan.download) {
-        std::println(std::cerr, "error: missing download plan for {}", info.name);
+        detail::print_error(std::format("missing download plan for {}", info.name));
         return false;
     }
 
@@ -1491,15 +1525,21 @@ auto install(registry::ToolInfo const& info) -> bool {
     };
 
     if (plan.download->use_cached_archive) {
-        std::println("Using cached archive for {} {}...", info.name, info.version);
+        detail::print_status(cppx::terminal::StatusKind::ok,
+                             std::format("using cached archive for {} {}",
+                                         info.name,
+                                         info.version));
     } else {
-        std::println("Downloading {} {}...", info.name, info.version);
+        detail::print_status(cppx::terminal::StatusKind::run,
+                             std::format("downloading {} {}",
+                                         info.name,
+                                         info.version));
         auto downloaded = net::download_file(
             plan.download->url,
             plan.download->archive_path,
             net::user_agent_headers(detail::user_agent()));
         if (!downloaded) {
-            std::println(std::cerr, "error: {}", downloaded.error());
+            detail::print_error(downloaded.error());
             std::filesystem::remove(plan.download->archive_path);
             cleanup();
             return false;
@@ -1507,7 +1547,7 @@ auto install(registry::ToolInfo const& info) -> bool {
     }
 
     if (plan.download->verify_checksum) {
-        std::println("Verifying checksum...");
+        detail::print_status(cppx::terminal::StatusKind::run, "verifying checksum");
         if (!detail::verify_checksum(
                 plan.download->archive_path,
                 plan.archive_name,
@@ -1520,10 +1560,10 @@ auto install(registry::ToolInfo const& info) -> bool {
     auto staging = plan.staging_dir;
     std::filesystem::create_directories(staging);
 
-    std::println("Extracting...");
+    detail::print_status(cppx::terminal::StatusKind::run, "extracting");
     auto extracted = detail::extract_archive(plan.download->archive_path, staging, info);
     if (!extracted) {
-        std::println(std::cerr, "error: extraction failed: {}", extracted.error());
+        detail::print_error(std::format("extraction failed: {}", extracted.error()));
         std::filesystem::remove_all(staging);
         cleanup();
         return false;
@@ -1547,18 +1587,23 @@ auto install(registry::ToolInfo const& info) -> bool {
     }
 
     success = true;
-    std::println("Installed {} {} to {}", info.name, info.version, dest.string());
+    detail::print_status(cppx::terminal::StatusKind::ok,
+                         std::format("installed {} {} to {}",
+                                     info.name,
+                                     info.version,
+                                     dest.string()));
     return true;
 }
 
 auto remove(std::string_view tool, std::string_view version) -> bool {
     auto path = toolchain_path(tool, version);
     if (!std::filesystem::exists(path)) {
-        std::println(std::cerr, "error: {} {} is not installed", tool, version);
+        detail::print_error(std::format("{} {} is not installed", tool, version));
         return false;
     }
     std::filesystem::remove_all(path);
-    std::println("Removed {} {}", tool, version);
+    detail::print_status(cppx::terminal::StatusKind::ok,
+                         std::format("removed {} {}", tool, version));
     return true;
 }
 

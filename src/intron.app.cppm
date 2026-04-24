@@ -1,5 +1,7 @@
 export module intron.app;
 import std;
+import cppx.terminal;
+import cppx.terminal.system;
 import intron.domain;
 import config;
 import installer;
@@ -13,6 +15,14 @@ import registry;
 namespace {
 
 constexpr auto intron_version = EXON_PKG_VERSION;
+
+auto stdout_color_enabled() -> bool {
+    return cppx::terminal::system::stdout_color_enabled(intron::terminal_options());
+}
+
+auto stderr_color_enabled() -> bool {
+    return cppx::terminal::system::stderr_color_enabled(intron::terminal_options());
+}
 
 auto exists_with_ports(intron::RuntimePorts const& ports,
                        std::filesystem::path const& path) -> bool
@@ -82,15 +92,17 @@ auto resolved_latest_version(intron::RuntimePorts const& ports, std::string_view
 
 auto add_missing_msvc_result(intron::CommandResult& result) -> void {
     result.exit_code = 1;
-    result.add_stderr("error: msvc is not installed");
-    result.add_stderr("hint: run 'intron install msvc 2022'");
+    auto color = stderr_color_enabled();
+    result.add_stderr(intron::error_line("msvc is not installed", color));
+    result.add_stderr(intron::hint_line("run 'intron install msvc 2022'", color));
 }
 
 auto usage_result(int exit_code) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = exit_code,
     };
-    for (auto const& line : intron::usage_lines(intron_version)) {
+    auto color = stdout_color_enabled();
+    for (auto const& line : intron::usage_lines(intron_version, color)) {
         result.add_stdout(line);
     }
     return result;
@@ -100,8 +112,11 @@ auto unknown_command_result(std::string_view command) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = 1,
     };
-    result.add_stderr(std::format("error: unknown command '{}'", command));
-    for (auto const& line : intron::usage_lines(intron_version)) {
+    result.add_stderr(intron::error_line(
+        std::format("unknown command '{}'", command),
+        stderr_color_enabled()));
+    auto color = stdout_color_enabled();
+    for (auto const& line : intron::usage_lines(intron_version, color)) {
         result.add_stdout(line);
     }
     return result;
@@ -126,7 +141,10 @@ auto command_from_string(std::string_view command) -> std::optional<intron::Comm
 }
 
 auto add_config_write_notice(intron::CommandResult& result) -> void {
-    result.add_stdout("wrote .intron.toml");
+    result.add_stdout(intron::status_line(
+        cppx::terminal::StatusKind::ok,
+        "wrote .intron.toml",
+        stdout_color_enabled()));
 }
 
 auto platform_values(intron::ConfigDocument const& document, std::string_view platform)
@@ -202,8 +220,13 @@ auto cmd_install(intron::CommandRequest const& request) -> intron::CommandResult
         auto toolchain = config::load_project_toolchain();
         if (toolchain.empty()) {
             result.exit_code = 1;
-            result.add_stderr("Usage: intron install <tool> <version>");
-            result.add_stderr("       intron install  (reads .intron.toml)");
+            auto color = stderr_color_enabled();
+            result.add_stderr(intron::error_line(
+                "usage: intron install <tool> <version>",
+                color));
+            result.add_stderr(intron::hint_line(
+                "run 'intron install' inside a project with .intron.toml",
+                color));
             return result;
         }
         int failed = 0;
@@ -226,7 +249,9 @@ auto cmd_remove(intron::CommandRequest const& request) -> intron::CommandResult 
     auto result = intron::CommandResult{};
     if (request.args.size() != 2) {
         result.exit_code = 1;
-        result.add_stderr("Usage: intron remove <tool> <version>");
+        result.add_stderr(intron::error_line(
+            "usage: intron remove <tool> <version>",
+            stderr_color_enabled()));
         return result;
     }
     result.exit_code = installer::remove(request.args[0], request.args[1]) ? 0 : 1;
@@ -237,11 +262,16 @@ auto cmd_list() -> intron::CommandResult {
     auto result = intron::CommandResult{};
     auto installed = installer::list_installed();
     if (installed.empty()) {
-        result.add_stdout("No toolchains installed");
+        result.add_stdout(intron::status_line(
+            cppx::terminal::StatusKind::skip,
+            "no toolchains installed",
+            stdout_color_enabled()));
         return result;
     }
 
+    auto color = stdout_color_enabled();
     auto defaults = config::load_effective_defaults();
+    result.add_stdout(intron::section_line("installed toolchains", color));
     for (auto const& [tool, version] : installed) {
         auto it = defaults.find(tool);
         auto display_version = version;
@@ -256,9 +286,11 @@ auto cmd_list() -> intron::CommandResult {
         }
 
         if (default_version && *default_version == display_version) {
-            result.add_stdout(std::format("{} {} (default)", tool, display_version));
+            result.add_stdout(intron::key_value_line(
+                tool,
+                std::format("{} (default)", display_version)));
         } else {
-            result.add_stdout(std::format("{} {}", tool, display_version));
+            result.add_stdout(intron::key_value_line(tool, display_version));
         }
     }
     return result;
@@ -268,7 +300,9 @@ auto cmd_which(intron::CommandRequest const& request) -> intron::CommandResult {
     auto result = intron::CommandResult{};
     if (request.args.size() != 1) {
         result.exit_code = 1;
-        result.add_stderr("Usage: intron which <binary>");
+        result.add_stderr(intron::error_line(
+            "usage: intron which <binary>",
+            stderr_color_enabled()));
         return result;
     }
 
@@ -276,26 +310,33 @@ auto cmd_which(intron::CommandRequest const& request) -> intron::CommandResult {
     auto tool = intron::tool_for_binary(binary);
     if (!tool) {
         result.exit_code = 1;
-        result.add_stderr(std::format("error: unknown binary '{}'", binary));
+        result.add_stderr(intron::error_line(
+            std::format("unknown binary '{}'", binary),
+            stderr_color_enabled()));
         return result;
     }
 
     auto version = config::get_default(*tool);
     if (!version) {
         result.exit_code = 1;
-        result.add_stderr(std::format("error: no default version set for {}", *tool));
-        result.add_stderr(std::format("hint: run 'intron default {} <version>'", *tool));
+        auto color = stderr_color_enabled();
+        result.add_stderr(intron::error_line(
+            std::format("no default version set for {}", *tool),
+            color));
+        result.add_stderr(intron::hint_line(
+            std::format("run 'intron default {} <version>'", *tool),
+            color));
         return result;
     }
 
     auto path = installer::which(binary, *tool, *version);
     if (!path) {
         result.exit_code = 1;
-        result.add_stderr(std::format(
-            "error: '{}' not found in {} {}",
+        result.add_stderr(intron::error_line(std::format(
+            "'{}' not found in {} {}",
             binary,
             *tool,
-            *version));
+            *version), stderr_color_enabled()));
         return result;
     }
 
@@ -313,7 +354,9 @@ auto cmd_default(intron::CommandRequest const& request,
     }
     if (parsed->positional.size() != 2) {
         result.exit_code = 1;
-        result.add_stderr("Usage: intron default <tool> <version> [--platform <name>]");
+        result.add_stderr(intron::error_line(
+            "usage: intron default <tool> <version> [--platform <name>]",
+            stderr_color_enabled()));
         return result;
     }
 
@@ -324,21 +367,30 @@ auto cmd_default(intron::CommandRequest const& request,
         auto path = installer::toolchain_path(home, tool, version);
         if (!exists_with_ports(ports, path)) {
             result.exit_code = 1;
-            result.add_stderr(std::format("error: {} {} is not installed", tool, version));
-            result.add_stderr(std::format("hint: run 'intron install {} {}'", tool, version));
+            auto color = stderr_color_enabled();
+            result.add_stderr(intron::error_line(
+                std::format("{} {} is not installed", tool, version),
+                color));
+            result.add_stderr(intron::hint_line(
+                std::format("run 'intron install {} {}'", tool, version),
+                color));
             return result;
         }
     }
 
     config::set_default(tool, version, parsed->platform.value_or(""));
+    auto color = stdout_color_enabled();
     if (parsed->platform) {
-        result.add_stdout(std::format(
+        result.add_stdout(intron::status_line(cppx::terminal::StatusKind::ok, std::format(
             "Set {} default to {} (platform: {})",
             tool,
             version,
-            *parsed->platform));
+            *parsed->platform), color));
     } else {
-        result.add_stdout(std::format("Set {} default to {}", tool, version));
+        result.add_stdout(intron::status_line(
+            cppx::terminal::StatusKind::ok,
+            std::format("Set {} default to {}", tool, version),
+            color));
     }
     return result;
 }
@@ -357,20 +409,27 @@ auto cmd_use(intron::CommandRequest const& request,
         auto [common, current_platform_values] = apply_current_defaults(document);
         if (common.empty() && current_platform_values.empty()) {
             result.exit_code = 1;
-            result.add_stderr("error: no default versions set");
-            result.add_stderr("hint: run 'intron default <tool> <version>' first");
+            auto color = stderr_color_enabled();
+            result.add_stderr(intron::error_line("no default versions set", color));
+            result.add_stderr(intron::hint_line(
+                "run 'intron default <tool> <version>' first",
+                color));
             return result;
         }
+        auto color = stdout_color_enabled();
         for (auto const& [tool, version] : common) {
-            result.add_stdout(std::format("set {} {}", tool, version));
+            result.add_stdout(intron::status_line(
+                cppx::terminal::StatusKind::ok,
+                std::format("set {} {}", tool, version),
+                color));
         }
         auto current_platform = std::string{registry::platform_name()};
         for (auto const& [tool, version] : current_platform_values) {
-            result.add_stdout(std::format(
+            result.add_stdout(intron::status_line(cppx::terminal::StatusKind::ok, std::format(
                 "set {} {} (platform: {})",
                 tool,
                 version,
-                current_platform));
+                current_platform), color));
         }
     } else {
         auto tool = parsed->positional[0];
@@ -381,14 +440,18 @@ auto cmd_use(intron::CommandRequest const& request,
                 auto home = resolved_intron_home(ports);
                 auto dest = installer::toolchain_path(home, tool, version);
                 if (!exists_with_ports(ports, dest)) {
-                    result.add_stdout(std::format("warning: {} {} is not installed", tool, version));
+                    result.add_stdout(intron::warning_line(
+                        std::format("{} {} is not installed", tool, version),
+                        stdout_color_enabled()));
                 }
             }
         } else {
             auto def = config::get_default(tool);
             if (!def) {
                 result.exit_code = 1;
-                result.add_stderr(std::format("error: no default version for {}", tool));
+                result.add_stderr(intron::error_line(
+                    std::format("no default version for {}", tool),
+                    stderr_color_enabled()));
                 return result;
             }
             version = *def;
@@ -396,14 +459,17 @@ auto cmd_use(intron::CommandRequest const& request,
 
         if (parsed->platform) {
             document.platforms[*parsed->platform][tool] = version;
-            result.add_stdout(std::format(
+            result.add_stdout(intron::status_line(cppx::terminal::StatusKind::ok, std::format(
                 "set {} {} (platform: {})",
                 tool,
                 version,
-                *parsed->platform));
+                *parsed->platform), stdout_color_enabled()));
         } else {
             document.common[tool] = version;
-            result.add_stdout(std::format("set {} {}", tool, version));
+            result.add_stdout(intron::status_line(
+                cppx::terminal::StatusKind::ok,
+                std::format("set {} {}", tool, version),
+                stdout_color_enabled()));
         }
     }
 
@@ -418,7 +484,9 @@ auto cmd_update(intron::CommandRequest const& request,
     auto result = intron::CommandResult{};
     if (request.args.size() > 1) {
         result.exit_code = 1;
-        result.add_stderr("Usage: intron update [tool]");
+        result.add_stderr(intron::error_line(
+            "usage: intron update [tool]",
+            stderr_color_enabled()));
         return result;
     }
 
@@ -426,14 +494,14 @@ auto cmd_update(intron::CommandRequest const& request,
         auto status = resolved_msvc_update_status(ports);
         if (!status) {
             result.exit_code = 1;
-            result.add_stderr(std::format("error: {}", status.error()));
+            result.add_stderr(intron::error_line(status.error(), stderr_color_enabled()));
             return result;
         }
         if (status->state == intron::MsvcUpdateState::Missing) {
             add_missing_msvc_result(result);
             return result;
         }
-        result.add_stdout(intron::render_msvc_update_status(*status));
+        result.add_stdout(intron::render_msvc_update_status(*status, stdout_color_enabled()));
         return result;
     }
 
@@ -445,7 +513,9 @@ auto cmd_update(intron::CommandRequest const& request,
         auto tool = request.args.front();
         if (!current.contains(tool) || registry::is_system_tool(tool)) {
             result.exit_code = 1;
-            result.add_stderr(std::format("error: {} is not installed", tool));
+            result.add_stderr(intron::error_line(
+                std::format("{} is not installed", tool),
+                stderr_color_enabled()));
             return result;
         }
         auto version = current[tool];
@@ -458,17 +528,19 @@ auto cmd_update(intron::CommandRequest const& request,
     });
 
     if (!has_non_system_tools) {
+        result.add_stdout(intron::section_line("latest versions", stdout_color_enabled()));
         for (auto tool : registry::supported_tools) {
             if (registry::is_system_tool(tool)) {
                 continue;
             }
             if (auto latest = resolved_latest_version(ports, tool)) {
-                result.add_stdout(std::format("{}: latest {}", tool, *latest));
+                result.add_stdout(intron::key_value_line(tool, std::format("latest {}", *latest)));
             }
         }
         return result;
     }
 
+    auto color = stdout_color_enabled();
     bool has_update = false;
     for (auto const& [tool, version] : current) {
         if (registry::is_system_tool(tool)) {
@@ -478,12 +550,14 @@ auto cmd_update(intron::CommandRequest const& request,
         if (status.state == intron::UpdateState::UpdateAvailable) {
             has_update = true;
         }
-        result.add_stdout(intron::render_update_status(status));
+        result.add_stdout(intron::render_update_status(status, color));
     }
 
     if (has_update) {
         result.add_stdout("");
-        result.add_stdout("Run 'intron install <tool> <version>' to update");
+        result.add_stdout(intron::hint_line(
+            "run 'intron install <tool> <version>' to update",
+            color));
     }
     return result;
 }
@@ -494,7 +568,9 @@ auto cmd_upgrade(intron::CommandRequest const& request,
     auto result = intron::CommandResult{};
     if (request.args.size() > 1) {
         result.exit_code = 1;
-        result.add_stderr("Usage: intron upgrade [tool]");
+        result.add_stderr(intron::error_line(
+            "usage: intron upgrade [tool]",
+            stderr_color_enabled()));
         return result;
     }
 
@@ -502,7 +578,7 @@ auto cmd_upgrade(intron::CommandRequest const& request,
         auto status = resolved_msvc_update_status(ports);
         if (!status) {
             result.exit_code = 1;
-            result.add_stderr(std::format("error: {}", status.error()));
+            result.add_stderr(intron::error_line(status.error(), stderr_color_enabled()));
             return result;
         }
         if (status->state == intron::MsvcUpdateState::Missing) {
@@ -511,28 +587,34 @@ auto cmd_upgrade(intron::CommandRequest const& request,
         }
         if (status->state == intron::MsvcUpdateState::Unknown) {
             result.exit_code = 1;
-            result.add_stdout(intron::render_msvc_upgrade_check(*status));
+            result.add_stdout(intron::render_msvc_upgrade_check(*status, stdout_color_enabled()));
             return result;
         }
         if (status->state == intron::MsvcUpdateState::UpToDate) {
-            result.add_stdout(intron::render_msvc_upgrade_check(*status));
+            result.add_stdout(intron::render_msvc_upgrade_check(*status, stdout_color_enabled()));
             return result;
         }
 
-        result.add_stdout(intron::render_msvc_upgrade_check(*status));
+        auto color = stdout_color_enabled();
+        result.add_stdout(intron::render_msvc_upgrade_check(*status, color));
         auto upgraded = resolved_msvc_upgrade(ports);
         if (!upgraded) {
             result.exit_code = 1;
-            result.add_stderr(std::format("error: {}", upgraded.error()));
+            result.add_stderr(intron::error_line(upgraded.error(), stderr_color_enabled()));
             return result;
         }
         if (upgraded->state != intron::MsvcUpdateState::UpToDate) {
             result.exit_code = 1;
-            result.add_stderr("error: msvc upgrade did not reach the latest servicing version");
+            result.add_stderr(intron::error_line(
+                "msvc upgrade did not reach the latest servicing version",
+                stderr_color_enabled()));
             return result;
         }
         result.add_stdout("");
-        result.add_stdout(std::format("Upgraded msvc to {}", upgraded->current_version));
+        result.add_stdout(intron::status_line(
+            cppx::terminal::StatusKind::ok,
+            std::format("Upgraded msvc to {}", upgraded->current_version),
+            color));
         return result;
     }
 
@@ -544,7 +626,9 @@ auto cmd_upgrade(intron::CommandRequest const& request,
         auto tool = request.args.front();
         if (!current.contains(tool)) {
             result.exit_code = 1;
-            result.add_stderr(std::format("error: {} is not installed", tool));
+            result.add_stderr(intron::error_line(
+                std::format("{} is not installed", tool),
+                stderr_color_enabled()));
             return result;
         }
         auto version = current[tool];
@@ -557,10 +641,14 @@ auto cmd_upgrade(intron::CommandRequest const& request,
     });
 
     if (!has_non_system_tools) {
-        result.add_stdout("No toolchains installed");
+        result.add_stdout(intron::status_line(
+            cppx::terminal::StatusKind::skip,
+            "no toolchains installed",
+            stdout_color_enabled()));
         return result;
     }
 
+    auto color = stdout_color_enabled();
     int upgraded = 0;
     for (auto const& [tool, version] : current) {
         if (registry::is_system_tool(tool)) {
@@ -568,18 +656,20 @@ auto cmd_upgrade(intron::CommandRequest const& request,
         }
         auto status = intron::make_update_status(tool, version, resolved_latest_version(ports, tool));
         if (status.state == intron::UpdateState::Unknown) {
-            result.add_stdout(intron::render_upgrade_check(status));
+            result.add_stdout(intron::render_upgrade_check(status, color));
             continue;
         }
         if (status.state == intron::UpdateState::UpToDate) {
-            result.add_stdout(intron::render_upgrade_check(status));
+            result.add_stdout(intron::render_upgrade_check(status, color));
             continue;
         }
 
-        result.add_stdout(intron::render_upgrade_check(status));
+        result.add_stdout(intron::render_upgrade_check(status, color));
         auto info = registry::resolve(tool, *status.latest_version);
         if (!installer::install(info)) {
-            result.add_stderr(std::format("error: failed to upgrade {}", tool));
+            result.add_stderr(intron::error_line(
+                std::format("failed to upgrade {}", tool),
+                stderr_color_enabled()));
             continue;
         }
         config::set_default(tool, *status.latest_version);
@@ -588,10 +678,13 @@ auto cmd_upgrade(intron::CommandRequest const& request,
 
     if (upgraded > 0) {
         result.add_stdout("");
-        result.add_stdout(std::format(
+        result.add_stdout(intron::status_line(
+            cppx::terminal::StatusKind::ok,
+            std::format(
             "Upgraded {} tool{}",
             upgraded,
-            upgraded == 1 ? "" : "s"));
+            upgraded == 1 ? "" : "s"),
+            color));
     }
     return result;
 }
@@ -631,8 +724,9 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
         auto result = intron::CommandResult{
             .exit_code = 1,
         };
-        result.add_stderr("error: no default versions set");
-        result.add_stderr("hint: run 'intron default <tool> <version>'");
+        auto color = stderr_color_enabled();
+        result.add_stderr(intron::error_line("no default versions set", color));
+        result.add_stderr(intron::hint_line("run 'intron default <tool> <version>'", color));
         return std::unexpected(std::move(result));
     }
 
@@ -645,8 +739,11 @@ auto resolve_env_plan(intron::RuntimePorts const& ports)
             auto result = intron::CommandResult{
                 .exit_code = 1,
             };
-            result.add_stderr("error: msvc is configured as a default toolchain but was not detected");
-            result.add_stderr("hint: run 'intron install msvc 2022'");
+            auto color = stderr_color_enabled();
+            result.add_stderr(intron::error_line(
+                "msvc is configured as a default toolchain but was not detected",
+                color));
+            result.add_stderr(intron::hint_line("run 'intron install msvc 2022'", color));
             return std::unexpected(std::move(result));
         }
     }
@@ -770,8 +867,9 @@ auto cmd_env(intron::CommandRequest const& request,
         auto result = intron::CommandResult{
             .exit_code = 2,
         };
-        result.add_stderr(std::format("error: {}", mode.error()));
-        for (auto const& line : intron::usage_lines(intron_version)) {
+        result.add_stderr(intron::error_line(mode.error(), stderr_color_enabled()));
+        auto color = stdout_color_enabled();
+        for (auto const& line : intron::usage_lines(intron_version, color)) {
             result.add_stdout(line);
         }
         return result;
@@ -812,7 +910,9 @@ auto cmd_exec(intron::CommandRequest const& request,
     auto result = intron::CommandResult{};
     if (!ports.process.run) {
         result.exit_code = 1;
-        result.add_stderr("error: process runner is not configured");
+        result.add_stderr(intron::error_line(
+            "process runner is not configured",
+            stderr_color_enabled()));
         return result;
     }
 
@@ -825,7 +925,7 @@ auto cmd_exec(intron::CommandRequest const& request,
     });
     if (!run_result) {
         result.exit_code = 1;
-        result.add_stderr(std::format("error: {}", run_result.error()));
+        result.add_stderr(intron::error_line(run_result.error(), stderr_color_enabled()));
         return result;
     }
 
