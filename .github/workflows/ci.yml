@@ -9,6 +9,10 @@ on:
       - ".gitignore"
       - ".claude/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -33,7 +37,7 @@ jobs:
           sed -n 's/^"vfox:misut\/mise-exon"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/exon=\1/p' mise.toml >> "$GITHUB_OUTPUT"
 
       - name: Cache toolchains
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.intron/toolchains
           key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.intron.toml') }}
@@ -135,9 +139,6 @@ jobs:
           ref: v1.4.0
           path: cppx
 
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Install CMake
         uses: jwlawson/actions-setup-cmake@v2
         with:
@@ -147,22 +148,48 @@ jobs:
         run: choco install ninja
 
       - name: Configure
-        run: >
-          cmake -G Ninja -S .github/cmake -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DTOMLCPP_DIR=${{ github.workspace }}/tomlcpp
-          -DCPPX_DIR=${{ github.workspace }}/cppx
+        shell: cmd
+        run: |
+          set "VSINSTALL="
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          if not exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          cmake -G Ninja -S .github/cmake -B build ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DTOMLCPP_DIR=${{ github.workspace }}/tomlcpp ^
+            -DCPPX_DIR=${{ github.workspace }}/cppx
 
       - name: Build
-        run: cmake --build build
+        shell: cmd
+        run: |
+          set "VSINSTALL="
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          if not exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          cmake --build build
 
       - name: Configure unit tests
-        run: cmake -G Ninja -S . -B test-build
+        shell: cmd
+        run: |
+          set "VSINSTALL="
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          if not exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          cmake -G Ninja -S . -B test-build
 
       - name: Build unit tests
-        run: >
-          cmake --build test-build
-          --target test-test_app test-test_config test-test_installer test-test_registry
+        shell: cmd
+        run: |
+          set "VSINSTALL="
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          if not exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          cmake --build test-build ^
+            --target test-test_app test-test_config test-test_installer test-test_registry
 
       - name: Run unit tests
         shell: pwsh
