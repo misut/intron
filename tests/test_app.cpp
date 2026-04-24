@@ -1,6 +1,7 @@
 #include <cstdlib>
 
 import std;
+import cppx.terminal;
 import intron.app;
 import config;
 import installer;
@@ -321,7 +322,12 @@ void test_update_msvc_uses_explicit_status_path() {
     check(status_calls == 1, "update msvc queries explicit msvc status exactly once");
     check(upgrade_calls == 0, "update msvc does not trigger upgrade");
     check(result.stdout_lines == std::vector<std::string>{
-              "msvc 17.14.9 -> 17.14.30 (update available)"},
+              intron::render_msvc_update_status(make_msvc_update_status(
+                  intron::MsvcUpdateState::UpdateAvailable,
+                  "17.14.9",
+                  "17.14.30",
+                  "17.14.36310.24",
+                  "17.14.37203.1"))},
           "update msvc reports display versions");
 }
 
@@ -400,9 +406,16 @@ void test_upgrade_msvc_succeeds() {
     check(status_calls == 1, "upgrade msvc checks current status once");
     check(upgrade_calls == 1, "upgrade msvc triggers installer upgrade once");
     check(result.stdout_lines == std::vector<std::string>{
-              "msvc 17.14.9 -> 17.14.30...",
+              intron::render_msvc_upgrade_check(make_msvc_update_status(
+                  intron::MsvcUpdateState::UpdateAvailable,
+                  "17.14.9",
+                  "17.14.30",
+                  "17.14.36310.24",
+                  "17.14.37203.1")),
               "",
-              "Upgraded msvc to 17.14.30"},
+              intron::status_line(
+                  cppx::terminal::StatusKind::ok,
+                  "Upgraded msvc to 17.14.30")},
           "upgrade msvc reports transition and completion");
 }
 
@@ -428,7 +441,9 @@ void test_upgrade_msvc_handles_unknown_latest_version() {
 
     check(result.exit_code == 1, "upgrade msvc fails when latest version is unknown");
     check(upgrade_calls == 0, "upgrade msvc does not run installer when latest version is unknown");
-    check(result.stdout_lines == std::vector<std::string>{"msvc: could not check latest version"},
+    check(result.stdout_lines == std::vector<std::string>{
+              intron::render_msvc_upgrade_check(
+                  make_msvc_update_status(intron::MsvcUpdateState::Unknown, "17.14.9"))},
           "upgrade msvc reports unknown latest version");
 }
 
@@ -488,7 +503,11 @@ void test_upgrade_without_args_does_not_auto_handle_msvc() {
     check(result.exit_code == 0, "upgrade without args succeeds without touching msvc");
     check(status_calls == 0, "upgrade without args does not query msvc status");
     check(latest_calls > 0, "upgrade without args still checks non-system tools");
-    check(result.stdout_lines == std::vector<std::string>{"llvm: could not check latest version"},
+    check(result.stdout_lines == std::vector<std::string>{
+              intron::render_upgrade_check(intron::make_update_status(
+                  "llvm",
+                  "22.1.2",
+                  std::nullopt))},
           "upgrade without args ignores msvc-only state");
 }
 
