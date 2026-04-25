@@ -55,7 +55,7 @@ include(FetchContent)
 if(NOT TARGET cppx)
     FetchContent_Declare(cppx
         GIT_REPOSITORY https://github.com/misut/cppx.git
-        GIT_TAG v1.8.0
+        GIT_TAG v1.9.2
         GIT_SHALLOW ON
     )
     FetchContent_MakeAvailable(cppx)
@@ -103,7 +103,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.21.4\""
+    "EXON_PKG_NAME=\"intron\";EXON_PKG_VERSION=\"0.21.5\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)

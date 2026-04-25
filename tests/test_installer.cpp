@@ -526,6 +526,22 @@ void test_install_plan() {
     check(!msvc_plan.download.has_value(), "msvc install plan has no archive download");
 }
 
+void test_prepare_clean_staging_dir_removes_stale_content() {
+    auto root = std::filesystem::temp_directory_path() /
+        std::format(
+            "intron-staging-test-{}",
+            std::chrono::steady_clock::now().time_since_epoch().count());
+    auto guard = TempDirGuard{root};
+    auto staging = root / "staging" / "android-ndk-r30-beta1";
+
+    write_text_file(staging / "toolchains" / "stale.txt", "stale");
+
+    auto prepared = installer::detail::prepare_clean_staging_dir(staging);
+    check(prepared.has_value(), "clean staging dir succeeds");
+    check(std::filesystem::exists(staging), "clean staging dir exists");
+    check(std::filesystem::is_empty(staging), "clean staging dir removes stale contents");
+}
+
 void test_msvc_environment_smoke() {
 #ifdef _WIN32
     auto root = installer::msvc_path();
@@ -566,6 +582,7 @@ int main() {
     test_msvc_binary_path();
     test_capture_msvc_environment_with_wrapper_script();
     test_install_plan();
+    test_prepare_clean_staging_dir_removes_stale_content();
     test_msvc_environment_smoke();
 
     if (failures > 0) {
