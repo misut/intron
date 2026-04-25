@@ -6,6 +6,7 @@ import intron.app;
 import config;
 import installer;
 import intron.domain;
+import intron.output;
 import registry;
 
 int failures = 0;

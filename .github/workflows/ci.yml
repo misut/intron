@@ -189,7 +189,7 @@ jobs:
           if not exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" exit /b 1
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
           cmake --build test-build ^
-            --target test-test_app test-test_config test-test_installer test-test_registry
+            --target test-test_app test-test_config test-test_installer test-test_output test-test_registry
 
       - name: Run unit tests
         shell: pwsh
@@ -198,6 +198,7 @@ jobs:
             'test-test_app.exe',
             'test-test_config.exe',
             'test-test_installer.exe',
+            'test-test_output.exe',
             'test-test_registry.exe'
           )) {
             $path = Join-Path $PWD "test-build\\$test"
