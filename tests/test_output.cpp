@@ -14,8 +14,8 @@ void check(bool cond, std::string_view msg) {
 
 void test_status_and_stage_lines() {
     check(intron::status_line(cppx::terminal::StatusKind::ok, "ready") ==
-              "OK      ready",
-          "status line uses fixed-width status cell");
+              "  OK   ready",
+          "status line uses indented compact status cell");
     check(intron::stage_line("extract", 3, 4, "ninja 1.13.2") ==
               "[3/4] [ninja 1.13.2] extract",
           "stage line includes index, total, context, and stage");
@@ -40,11 +40,11 @@ void test_usage_documents_human_color_controls() {
 void test_update_rendering() {
     check(intron::render_update_status(intron::make_update_status(
               "ninja", "1.13.1", std::optional<std::string>{"1.13.2"})) ==
-              "RUN     ninja 1.13.1 -> 1.13.2 (update available)",
+              "  RUN  ninja 1.13.1 -> 1.13.2 (update available)",
           "update available status is human-readable");
     check(intron::render_upgrade_check(intron::make_update_status(
               "cmake", "4.3.1", std::optional<std::string>{"4.3.1"})) ==
-              "OK      cmake 4.3.1 (up to date)",
+              "  OK   cmake 4.3.1 (up to date)",
           "upgrade check reports up-to-date tools");
 }
 
@@ -58,10 +58,10 @@ void test_msvc_rendering() {
         .state = intron::MsvcUpdateState::UpdateAvailable,
     };
 
-    check(intron::render_msvc_update_status(missing) == "FAIL    msvc: not installed",
+    check(intron::render_msvc_update_status(missing) == "  FAIL msvc: not installed",
           "msvc missing status is formatted");
     check(intron::render_msvc_upgrade_check(available) ==
-              "RUN     msvc 17.14.9 -> 17.14.30...",
+              "  RUN  msvc 17.14.9 -> 17.14.30...",
           "msvc upgrade transition is formatted");
 }
 
