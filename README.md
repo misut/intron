@@ -179,6 +179,14 @@ instead of `eval "$(intron env)"`.
 
 ### Output modes
 
+Human-facing commands use compact stage and status lines. Long-running
+installation work is grouped by tool and phase, while script-oriented commands
+such as `intron env`, `intron which`, and `intron exec -- ...` keep their
+machine-readable output unchanged.
+
+Set `INTRON_COLOR=auto|always|never` to control ANSI color in human output.
+`NO_COLOR=1` disables color in auto mode.
+
 `intron env` supports two additive output modes for cases where the default
 shell-eval form is unwanted (for example, GitHub Actions, where reassigning
 `PATH` via `Invoke-Expression` would freeze it at eval time and mask later

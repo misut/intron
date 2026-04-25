@@ -3,6 +3,7 @@ import std;
 import cppx.terminal;
 import cppx.terminal.system;
 import intron.domain;
+import intron.output;
 import config;
 import installer;
 import net;

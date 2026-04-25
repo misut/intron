@@ -6,6 +6,7 @@ import cppx.terminal.system;
 import intron.app;
 import intron.domain;
 import intron.edge;
+import intron.output;
 import installer;
 import net;
 import registry;

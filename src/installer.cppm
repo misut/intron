@@ -12,6 +12,7 @@ import cppx.process.system;
 import cppx.terminal;
 import cppx.terminal.system;
 import intron.domain;
+import intron.output;
 import net;
 export import registry;
 
@@ -144,6 +145,19 @@ auto print_status(cppx::terminal::StatusKind status,
                   std::string_view message) -> void
 {
     std::println("{}", intron::status_line(status, message, stdout_color_enabled()));
+}
+
+auto print_stage(std::string_view name,
+                 int index,
+                 int total,
+                 std::string_view context) -> void
+{
+    std::println("{}", intron::stage_line(
+        name,
+        index,
+        total,
+        context,
+        stdout_color_enabled()));
 }
 
 auto print_warning(std::string_view message) -> void {
@@ -1401,6 +1415,7 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
         return false;
     }
 
+    auto context = std::format("{} {}", info.name, info.version);
     if (auto ready = detect_ready_msvc_instance()) {
         detail::print_status(cppx::terminal::StatusKind::ok,
                              std::format("msvc {} ready at {}",
@@ -1412,8 +1427,10 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
     auto vswhere_path = find_vswhere_path();
     auto instances = discover_visual_studio_instances();
     auto restart_required = false;
+    auto modified_existing = false;
 
     if (auto modify_target = select_msvc_modify_target(instances)) {
+        modified_existing = true;
         auto setup_path = find_visual_studio_setup_path(vswhere_path);
         if (!setup_path) {
             detail::print_error("Visual Studio Installer setup.exe was not found");
@@ -1421,6 +1438,7 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
             return false;
         }
 
+        detail::print_stage("configure", 1, 2, context);
         detail::print_status(cppx::terminal::StatusKind::run,
                              std::format("configuring Visual Studio instance at {}",
                                          modify_target->installation_path.string()));
@@ -1434,6 +1452,7 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
             result.status.kind == VisualStudioInstallerExitKind::SuccessRebootRequired;
     } else {
         auto bootstrapper = cached_msvc_bootstrapper_path(info);
+        detail::print_stage("bootstrap", 1, 3, context);
         if (std::filesystem::exists(bootstrapper)) {
             detail::print_status(cppx::terminal::StatusKind::ok,
                                  "using cached Visual Studio Build Tools bootstrapper");
@@ -1450,6 +1469,7 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
             }
         }
 
+        detail::print_stage("install", 2, 3, context);
         detail::print_status(cppx::terminal::StatusKind::run,
                              "installing Visual Studio Build Tools 2022");
         auto command = build_msvc_install_command(info, bootstrapper);
@@ -1473,6 +1493,8 @@ auto ensure_msvc_available(registry::ToolInfo const& info) -> bool {
         detail::print_warning(
             "Visual Studio Build Tools requested a reboot before the toolchain is fully ready");
     }
+    auto finish_stage = modified_existing ? 2 : 3;
+    detail::print_stage("finish", finish_stage, finish_stage, context);
     detail::print_status(cppx::terminal::StatusKind::ok,
                          std::format("msvc {} ready at {}",
                                      info.version,
@@ -1501,6 +1523,7 @@ auto install(registry::ToolInfo const& info) -> bool {
         cached_archive && std::filesystem::exists(cached_archive->archive_path);
     auto plan = intron::make_install_plan(home, info, use_cached_archive);
     auto dest = plan.dest;
+    auto context = std::format("{} {}", info.name, info.version);
 
     if (std::filesystem::exists(dest) && !std::filesystem::is_empty(dest)) {
         detail::print_status(cppx::terminal::StatusKind::ok,
@@ -1517,6 +1540,15 @@ auto install(registry::ToolInfo const& info) -> bool {
 
     std::filesystem::create_directories(plan.downloads_dir);
 
+    auto stage_total = 3;
+    if (plan.download->verify_checksum) {
+        ++stage_total;
+    }
+    if (!plan.post_install_actions.empty()) {
+        ++stage_total;
+    }
+    auto stage_index = 1;
+
     auto success = false;
     auto cleanup = [&] {
         if (!success) {
@@ -1524,6 +1556,7 @@ auto install(registry::ToolInfo const& info) -> bool {
         }
     };
 
+    detail::print_stage("archive", stage_index++, stage_total, context);
     if (plan.download->use_cached_archive) {
         detail::print_status(cppx::terminal::StatusKind::ok,
                              std::format("using cached archive for {} {}",
@@ -1547,6 +1580,7 @@ auto install(registry::ToolInfo const& info) -> bool {
     }
 
     if (plan.download->verify_checksum) {
+        detail::print_stage("verify", stage_index++, stage_total, context);
         detail::print_status(cppx::terminal::StatusKind::run, "verifying checksum");
         if (!detail::verify_checksum(
                 plan.download->archive_path,
@@ -1560,6 +1594,7 @@ auto install(registry::ToolInfo const& info) -> bool {
     auto staging = plan.staging_dir;
     std::filesystem::create_directories(staging);
 
+    detail::print_stage("extract", stage_index++, stage_total, context);
     detail::print_status(cppx::terminal::StatusKind::run, "extracting");
     auto extracted = detail::extract_archive(plan.download->archive_path, staging, info);
     if (!extracted) {
@@ -1572,6 +1607,9 @@ auto install(registry::ToolInfo const& info) -> bool {
     std::filesystem::create_directories(dest.parent_path());
     std::filesystem::rename(staging, dest);
 
+    if (!plan.post_install_actions.empty()) {
+        detail::print_stage("configure", stage_index++, stage_total, context);
+    }
     for (auto const& action : plan.post_install_actions) {
         switch (action.kind) {
         case intron::PostInstallActionKind::SetupLlvmConfig:
@@ -1587,6 +1625,7 @@ auto install(registry::ToolInfo const& info) -> bool {
     }
 
     success = true;
+    detail::print_stage("finish", stage_index++, stage_total, context);
     detail::print_status(cppx::terminal::StatusKind::ok,
                          std::format("installed {} {} to {}",
                                      info.name,

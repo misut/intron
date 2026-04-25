@@ -77,6 +77,7 @@ target_sources(intron-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.app.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.domain.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.edge.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.output.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
 )
@@ -97,6 +98,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.app.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.domain.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.edge.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/intron.output.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/registry.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
@@ -290,6 +292,35 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_apply_msvc_test_silence(test-test_installer)
+
+add_executable(test-test_output)
+target_sources(test-test_output PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_output.cpp
+)
+target_link_libraries(test-test_output PRIVATE
+    intron-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_link_options(test-test_output PRIVATE
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_link_options(test-test_output PRIVATE
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+endif()
+exon_apply_msvc_test_silence(test-test_output)
 
 add_executable(test-test_registry)
 target_sources(test-test_registry PRIVATE
