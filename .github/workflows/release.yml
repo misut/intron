@@ -17,8 +17,6 @@ jobs:
             platform: aarch64-apple-darwin
           - os: ubuntu-24.04
             platform: x86_64-linux-gnu
-          - os: ubuntu-24.04-arm
-            platform: aarch64-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
