@@ -16,8 +16,8 @@ inline auto status_line(cppx::terminal::StatusKind status,
                         bool color_enabled = false) -> std::string
 {
     return std::format(
-        "{} {}",
-        cppx::terminal::status_cell(status, color_enabled),
+        "  {} {}",
+        cppx::terminal::status_cell(status, color_enabled, 4),
         message);
 }
 
