@@ -43,6 +43,7 @@ set(INTRON_MODULE_FILES
     ${INTRON_SOURCE_DIR}/src/intron.app.cppm
     ${INTRON_SOURCE_DIR}/src/intron.domain.cppm
     ${INTRON_SOURCE_DIR}/src/intron.edge.cppm
+    ${INTRON_SOURCE_DIR}/src/intron.output.cppm
     ${INTRON_SOURCE_DIR}/src/net.cppm
     ${INTRON_SOURCE_DIR}/src/registry.cppm
 )
