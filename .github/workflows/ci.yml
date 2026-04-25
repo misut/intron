@@ -134,7 +134,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: misut/cppx
-          ref: v1.8.0
+          ref: v1.9.2
           path: cppx
 
       - name: Install CMake

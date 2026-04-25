@@ -285,6 +285,28 @@ auto extract_archive(std::filesystem::path const& archive,
     return {};
 }
 
+auto prepare_clean_staging_dir(std::filesystem::path const& staging)
+    -> std::expected<void, std::string>
+{
+    std::error_code ec;
+    std::filesystem::remove_all(staging, ec);
+    if (ec) {
+        return std::unexpected(std::format(
+            "could not remove stale staging directory '{}': {}",
+            staging.string(),
+            ec.message()));
+    }
+
+    std::filesystem::create_directories(staging, ec);
+    if (ec) {
+        return std::unexpected(std::format(
+            "could not create staging directory '{}': {}",
+            staging.string(),
+            ec.message()));
+    }
+    return {};
+}
+
 auto verify_checksum(std::filesystem::path const& archive,
                      std::string_view archive_name,
                      std::string const& checksum_url) -> bool
@@ -1591,11 +1613,15 @@ auto install(registry::ToolInfo const& info) -> bool {
         }
     }
 
-    auto staging = plan.staging_dir;
-    std::filesystem::create_directories(staging);
-
     detail::print_stage("extract", stage_index++, stage_total, context);
     detail::print_status(cppx::terminal::StatusKind::run, "extracting");
+    auto staging = plan.staging_dir;
+    auto prepared = detail::prepare_clean_staging_dir(staging);
+    if (!prepared) {
+        detail::print_error(prepared.error());
+        cleanup();
+        return false;
+    }
     auto extracted = detail::extract_archive(plan.download->archive_path, staging, info);
     if (!extracted) {
         detail::print_error(std::format("extraction failed: {}", extracted.error()));
