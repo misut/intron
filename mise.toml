@@ -1,5 +1,5 @@
 [tools]
-"vfox:misut/mise-exon" = "0.29.0"
+"vfox:misut/mise-exon" = "0.30.0"
 "vfox:misut/mise-intron" = "0.21.2"
 cmake = "latest"
 ninja = "latest"
