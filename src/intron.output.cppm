@@ -46,28 +46,25 @@ inline auto key_value_line(std::string_view key,
 inline auto error_line(std::string_view message,
                        bool color_enabled = false) -> std::string
 {
-    return std::format(
-        "{} {}",
-        cppx::terminal::style("error:", cppx::terminal::StyleRole::error, color_enabled),
-        message);
+    return cppx::terminal::diagnostic_line(
+        cppx::terminal::DiagnosticSeverity::error,
+        message,
+        color_enabled);
 }
 
 inline auto warning_line(std::string_view message,
                          bool color_enabled = false) -> std::string
 {
-    return std::format(
-        "{} {}",
-        cppx::terminal::style("warning:", cppx::terminal::StyleRole::warning, color_enabled),
-        message);
+    return cppx::terminal::diagnostic_line(
+        cppx::terminal::DiagnosticSeverity::warning,
+        message,
+        color_enabled);
 }
 
 inline auto hint_line(std::string_view message,
                       bool color_enabled = false) -> std::string
 {
-    return std::format(
-        "{} {}",
-        cppx::terminal::style("hint:", cppx::terminal::StyleRole::dim, color_enabled),
-        message);
+    return cppx::terminal::hint_line(message, color_enabled);
 }
 
 inline auto usage_lines(std::string_view version,
@@ -89,6 +86,8 @@ inline auto usage_lines(std::string_view version,
         "  use     [tool] [version] [--platform <name>]  Set project toolchain in .intron.toml",
         "  update  [tool]                                Check for updates",
         "  upgrade [tool]                                Upgrade tools to latest",
+        "  status  [--output human|json]                 Show toolchain diagnostics",
+        "  doctor  [--output human|json]                 Alias for status diagnostics",
         "  env     [--path-only|--github]                Print environment variables",
         "  exec    -- <command> [args...]                Run a command with intron environment",
         "  self-update                                  Update intron itself",

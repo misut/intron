@@ -1,5 +1,6 @@
 export module intron.app;
 import std;
+import cppx.cli;
 import cppx.terminal;
 import cppx.terminal.system;
 import intron.domain;
@@ -98,6 +99,804 @@ auto add_missing_msvc_result(intron::CommandResult& result) -> void {
     result.add_stderr(intron::hint_line("run 'intron install msvc 2022'", color));
 }
 
+enum class StatusOutputMode {
+  Human,
+  Json,
+};
+
+struct EffectiveToolchainEntry {
+  std::string tool;
+  std::string version;
+  std::string source;
+};
+
+struct ToolStatus {
+  std::string tool;
+  std::string version;
+  bool installed = false;
+  bool system = false;
+  std::string path;
+  std::map<std::string, std::string> binaries;
+};
+
+struct EnvironmentStatus {
+  bool available = false;
+  std::string error;
+  std::map<std::string, std::string> assignments;
+  std::vector<std::string> path_entries;
+};
+
+struct NetworkStatus {
+  std::string env_value;
+  std::string selected_backend;
+};
+
+struct MsvcStatus {
+  bool configured = false;
+  bool available = false;
+  std::string status;
+  std::string bin_dir;
+  std::string cl;
+  std::vector<std::string> windows_sdk_bin_dirs;
+};
+
+struct StatusDiagnostic {
+  cppx::terminal::DiagnosticSeverity severity =
+      cppx::terminal::DiagnosticSeverity::info;
+  std::string context;
+  std::string message;
+  std::vector<std::string> hints;
+};
+
+struct StatusReport {
+  std::string version;
+  std::string platform;
+  std::string triple;
+  std::optional<std::filesystem::path> project_config;
+  std::vector<EffectiveToolchainEntry> effective_toolchain;
+  std::vector<ToolStatus> tools;
+  EnvironmentStatus environment;
+  NetworkStatus network;
+  MsvcStatus msvc;
+  std::vector<StatusDiagnostic> diagnostics;
+};
+
+auto status_command_spec(std::string_view command) -> cppx::cli::CommandSpec {
+  return cppx::cli::CommandSpec{
+      .name = std::string{command},
+      .summary = "Show toolchain diagnostics",
+      .options =
+          {
+              cppx::cli::OptionSpec{
+                  .name = "output",
+                  .arity = cppx::cli::OptionArity::one,
+                  .value_name = "mode",
+                  .description = "Output mode",
+                  .value_hints = {"human", "json"},
+              },
+          },
+      .allow_positionals = false,
+  };
+}
+
+auto parse_status_output_mode(std::vector<std::string> const &args,
+                              std::string_view command)
+    -> std::expected<StatusOutputMode, std::string> {
+  auto views = std::vector<std::string_view>{};
+  views.reserve(args.size());
+  for (auto const &arg : args) {
+    views.push_back(arg);
+  }
+
+  auto parsed = cppx::cli::parse(status_command_spec(command), views);
+  if (!parsed) {
+    return std::unexpected(parsed.error().message);
+  }
+
+  auto output = parsed->value("output").value_or("human");
+  if (output == "human") {
+    return StatusOutputMode::Human;
+  }
+  if (output == "json") {
+    return StatusOutputMode::Json;
+  }
+  return std::unexpected(
+      std::format("invalid output mode '{}' (expected: human, json)", output));
+}
+
+auto diagnostic_severity_string(cppx::terminal::DiagnosticSeverity severity)
+    -> std::string_view {
+  switch (severity) {
+  case cppx::terminal::DiagnosticSeverity::info:
+    return "info";
+  case cppx::terminal::DiagnosticSeverity::warning:
+    return "warning";
+  case cppx::terminal::DiagnosticSeverity::error:
+    return "error";
+  }
+  return "info";
+}
+
+auto add_status_diagnostic(StatusReport &report,
+                           cppx::terminal::DiagnosticSeverity severity,
+                           std::string context, std::string message,
+                           std::vector<std::string> hints = {}) -> void {
+  report.diagnostics.push_back({
+      .severity = severity,
+      .context = std::move(context),
+      .message = std::move(message),
+      .hints = std::move(hints),
+  });
+}
+
+auto backend_string(net::Backend backend) -> std::string_view {
+  switch (backend) {
+  case net::Backend::Auto:
+    return "auto";
+  case net::Backend::Cppx:
+    return "cppx";
+  case net::Backend::Shell:
+    return "shell";
+  }
+  return "auto";
+}
+
+auto get_env_value(intron::RuntimePorts const &ports, std::string_view key)
+    -> std::optional<std::string> {
+  if (ports.environment.get) {
+    if (auto value = ports.environment.get(key)) {
+      return value;
+    }
+  }
+  auto owned = std::string{key};
+  if (auto const *value = std::getenv(owned.c_str()); value && *value) {
+    return std::string{value};
+  }
+  return std::nullopt;
+}
+
+auto platform_values(intron::ConfigDocument const &document,
+                     std::string_view platform)
+    -> std::map<std::string, std::string>;
+
+auto resolve_env_plan(intron::RuntimePorts const &ports)
+    -> std::expected<intron::EnvPlan, intron::CommandResult>;
+
+auto add_effective_entries_from(
+    std::map<std::string, EffectiveToolchainEntry> &entries,
+    std::map<std::string, std::string> const &values, std::string_view source)
+    -> void {
+  for (auto const &[tool, version] : values) {
+    entries[tool] = EffectiveToolchainEntry{
+        .tool = tool,
+        .version = version,
+        .source = std::string{source},
+    };
+  }
+}
+
+auto normalize_effective_versions(StatusReport &report) -> void {
+  for (auto &entry : report.effective_toolchain) {
+    try {
+      entry.version =
+          registry::normalize_requested_version(entry.tool, entry.version);
+    } catch (std::exception const &e) {
+      add_status_diagnostic(
+          report, cppx::terminal::DiagnosticSeverity::error, "config", e.what(),
+          {"fix the version in .intron.toml or ~/.intron/config.toml"});
+    }
+  }
+}
+
+auto collect_effective_toolchain(StatusReport &report,
+                                 intron::ConfigDocument const &defaults,
+                                 intron::ConfigDocument const &project)
+    -> void {
+  auto const platform = std::string{registry::platform_name()};
+  auto entries = std::map<std::string, EffectiveToolchainEntry>{};
+  add_effective_entries_from(entries, defaults.common, "defaults");
+  add_effective_entries_from(entries, platform_values(defaults, platform),
+                             std::format("defaults.{}", platform));
+  add_effective_entries_from(entries, project.common, "project");
+  add_effective_entries_from(entries, platform_values(project, platform),
+                             std::format("project.{}", platform));
+
+  for (auto &[_, entry] : entries) {
+    report.effective_toolchain.push_back(std::move(entry));
+  }
+  normalize_effective_versions(report);
+
+  if (report.effective_toolchain.empty()) {
+    add_status_diagnostic(report, cppx::terminal::DiagnosticSeverity::error,
+                          "config", "no effective toolchain entries",
+                          {"run 'intron default <tool> <version>' or create "
+                           ".intron.toml with 'intron use'"});
+  }
+}
+
+auto exists_for_status(intron::RuntimePorts const &ports,
+                       std::filesystem::path const &path) -> bool {
+  return exists_with_ports(ports, path);
+}
+
+auto resolve_binary_path(intron::RuntimePorts const &ports,
+                         std::filesystem::path const &intron_home,
+                         std::string_view tool, std::string_view version,
+                         std::string_view binary)
+    -> std::optional<std::filesystem::path> {
+  auto base = installer::toolchain_path(intron_home, tool, version);
+  auto path = (tool == "ninja" || tool == "wasmtime" || tool == "android-ndk")
+                  ? base / binary
+                  : base / "bin" / binary;
+  if (exists_for_status(ports, path)) {
+    return path;
+  }
+#ifdef _WIN32
+  auto exe_path = path;
+  exe_path += ".exe";
+  if (exists_for_status(ports, exe_path)) {
+    return exe_path;
+  }
+#endif
+  return std::nullopt;
+}
+
+auto binary_candidates(std::string_view tool)
+    -> std::vector<std::pair<std::string, std::string>> {
+  if (tool == "cmake") {
+    return {{"cmake", "cmake"}};
+  }
+  if (tool == "ninja") {
+    return {{"ninja", "ninja"}};
+  }
+  if (tool == "llvm") {
+#ifdef _WIN32
+    return {{"compiler", "clang-cl"}};
+#else
+    return {{"cc", "clang"}, {"cxx", "clang++"}};
+#endif
+  }
+  if (tool == "wasi-sdk") {
+    return {{"wasi-cxx", "clang++"}};
+  }
+  if (tool == "wasmtime") {
+    return {{"wasmtime", "wasmtime"}};
+  }
+  if (tool == "android-ndk") {
+    return {{"ndk-build", "ndk-build"}};
+  }
+  return {};
+}
+
+auto collect_tool_statuses(
+    StatusReport &report, intron::RuntimePorts const &ports,
+    std::optional<std::filesystem::path> const &intron_home,
+    std::optional<intron::MsvcEnvironment> const &msvc_env) -> void {
+  for (auto const &entry : report.effective_toolchain) {
+    auto status = ToolStatus{
+        .tool = entry.tool,
+        .version = entry.version,
+        .system = registry::is_system_tool(entry.tool),
+    };
+
+    if (entry.tool == "sdk") {
+      status.installed = !entry.version.empty();
+      report.tools.push_back(std::move(status));
+      continue;
+    }
+
+    if (entry.tool == "msvc") {
+      status.installed = msvc_env.has_value();
+      if (msvc_env) {
+        status.path = msvc_env->bin_dir.string();
+        status.binaries["cl"] = msvc_env->cl.string();
+      } else {
+        add_status_diagnostic(report, cppx::terminal::DiagnosticSeverity::error,
+                              "msvc", "msvc is configured but was not detected",
+                              {"run 'intron install msvc 2022'"});
+      }
+      report.tools.push_back(std::move(status));
+      continue;
+    }
+
+    if (!intron_home) {
+      add_status_diagnostic(report, cppx::terminal::DiagnosticSeverity::error,
+                            "environment", "HOME environment variable not set",
+                            {"set HOME before running intron status"});
+      report.tools.push_back(std::move(status));
+      continue;
+    }
+
+    auto base =
+        installer::toolchain_path(*intron_home, entry.tool, entry.version);
+    status.path = base.string();
+    status.installed = exists_for_status(ports, base);
+    if (!status.installed) {
+      add_status_diagnostic(
+          report, cppx::terminal::DiagnosticSeverity::warning, "tools",
+          std::format("{} {} is not installed", entry.tool, entry.version),
+          {std::format("run 'intron install {} {}'", entry.tool,
+                       entry.version)});
+    }
+
+    for (auto const &[label, binary] : binary_candidates(entry.tool)) {
+      if (auto path = resolve_binary_path(ports, *intron_home, entry.tool,
+                                          entry.version, binary)) {
+        status.binaries[label] = path->string();
+      }
+    }
+    report.tools.push_back(std::move(status));
+  }
+}
+
+auto collect_environment_status(StatusReport &report,
+                                intron::RuntimePorts const &ports) -> void {
+  auto resolved = resolve_env_plan(ports);
+  if (!resolved) {
+    report.environment.available = false;
+    auto message = std::string{};
+    for (auto const &line : resolved.error().stderr_lines) {
+      if (!message.empty()) {
+        message += "; ";
+      }
+      message += line;
+    }
+    report.environment.error =
+        message.empty() ? "could not resolve environment" : std::move(message);
+    add_status_diagnostic(
+        report, cppx::terminal::DiagnosticSeverity::error, "environment",
+        report.environment.error,
+        {"fix the reported toolchain configuration before using 'intron env'"});
+    return;
+  }
+
+  report.environment.available = true;
+#ifdef _WIN32
+  constexpr auto is_windows = true;
+#else
+  constexpr auto is_windows = false;
+#endif
+  for (auto const &assignment : resolved->assignments) {
+    report.environment.assignments[assignment.key] = assignment.value;
+    if (assignment.key == "PATH" && assignment.append_existing) {
+      report.environment.path_entries =
+          intron::split_path_value(assignment.value, is_windows);
+    }
+  }
+}
+
+auto collect_network_status(StatusReport &report,
+                            intron::RuntimePorts const &ports) -> void {
+  auto raw = get_env_value(ports, "INTRON_NET_BACKEND");
+  report.network.env_value = raw.value_or("");
+  auto selected = net::selected_backend_from_string(
+      raw ? std::optional<std::string_view>{std::string_view{*raw}}
+          : std::nullopt);
+  report.network.selected_backend = std::string{backend_string(selected)};
+  if (raw && !raw->empty()) {
+    auto lowered = std::string{*raw};
+    for (auto &ch : lowered) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (selected == net::Backend::Auto && lowered != "auto") {
+      add_status_diagnostic(
+          report, cppx::terminal::DiagnosticSeverity::warning, "network",
+          std::format("unknown INTRON_NET_BACKEND '{}'", *raw),
+          {"use INTRON_NET_BACKEND=auto, cppx, or shell"});
+    }
+  }
+}
+
+auto collect_msvc_status(StatusReport &report,
+                         intron::RuntimePorts const &ports,
+                         std::optional<intron::MsvcEnvironment> const &msvc_env)
+    -> void {
+  report.msvc.configured =
+      std::ranges::any_of(report.effective_toolchain, [](auto const &entry) {
+        return entry.tool == "msvc";
+      });
+
+#ifdef _WIN32
+  report.msvc.available = msvc_env.has_value();
+  if (msvc_env) {
+    report.msvc.status = report.msvc.configured ? "configured" : "available";
+    report.msvc.bin_dir = msvc_env->bin_dir.string();
+    report.msvc.cl = msvc_env->cl.string();
+  } else {
+    report.msvc.status = report.msvc.configured ? "missing" : "not_configured";
+  }
+  if (ports.toolchain.windows_sdk_bin_dirs) {
+    for (auto const &path :
+         ports.toolchain.windows_sdk_bin_dirs(config::get_windows_sdk_pin())) {
+      report.msvc.windows_sdk_bin_dirs.push_back(path.string());
+    }
+  }
+#else
+  report.msvc.available = false;
+  report.msvc.status = "not_applicable";
+#endif
+}
+
+auto build_status_report(intron::RuntimePorts const &ports) -> StatusReport {
+  auto report = StatusReport{
+      .version = std::string{intron_version},
+      .platform = std::string{registry::platform_name()},
+      .triple = registry::platform_triple(),
+  };
+
+  auto defaults = intron::ConfigDocument{};
+  auto project = intron::ConfigDocument{};
+  try {
+    defaults = config::load_full_defaults();
+  } catch (std::exception const &e) {
+    add_status_diagnostic(report, cppx::terminal::DiagnosticSeverity::warning,
+                          "config", e.what());
+  }
+
+  try {
+    report.project_config = config::find_project_config();
+    project = config::load_full_project_config();
+  } catch (std::exception const &e) {
+    add_status_diagnostic(report, cppx::terminal::DiagnosticSeverity::error,
+                          "config", e.what());
+  }
+
+  if (!report.project_config) {
+    add_status_diagnostic(
+        report, cppx::terminal::DiagnosticSeverity::warning, "config",
+        "project config .intron.toml was not found",
+        {"run 'intron use' from a project after setting defaults"});
+  }
+
+  collect_effective_toolchain(report, defaults, project);
+
+  auto home = std::optional<std::filesystem::path>{};
+  try {
+    home = resolved_home_dir(ports);
+  } catch (std::exception const &e) {
+    add_status_diagnostic(report, cppx::terminal::DiagnosticSeverity::error,
+                          "environment", e.what());
+  }
+  auto intron_home =
+      home ? std::optional<std::filesystem::path>{installer::intron_home_path(
+                 *home)}
+           : std::nullopt;
+
+  auto msvc_env = resolved_msvc_environment(ports);
+  collect_tool_statuses(report, ports, intron_home, msvc_env);
+  collect_environment_status(report, ports);
+  collect_network_status(report, ports);
+  collect_msvc_status(report, ports, msvc_env);
+
+  return report;
+}
+
+auto json_escape(std::string_view text) -> std::string {
+  auto out = std::string{};
+  out.reserve(text.size() + 2);
+  for (auto ch : text) {
+    switch (ch) {
+    case '"':
+      out += "\\\"";
+      break;
+    case '\\':
+      out += "\\\\";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    case '\r':
+      out += "\\r";
+      break;
+    case '\t':
+      out += "\\t";
+      break;
+    default:
+      if (static_cast<unsigned char>(ch) < 0x20) {
+        out += std::format("\\u{:04x}", static_cast<unsigned char>(ch));
+      } else {
+        out.push_back(ch);
+      }
+      break;
+    }
+  }
+  return out;
+}
+
+auto json_string(std::string_view text) -> std::string {
+  return std::format("\"{}\"", json_escape(text));
+}
+
+auto json_bool(bool value) -> std::string_view {
+  return value ? "true" : "false";
+}
+
+auto append_json_string_map(std::string &out,
+                            std::map<std::string, std::string> const &values)
+    -> void {
+  out.push_back('{');
+  auto first = true;
+  for (auto const &[key, value] : values) {
+    if (!first) {
+      out.push_back(',');
+    }
+    first = false;
+    out += std::format("{}:{}", json_string(key), json_string(value));
+  }
+  out.push_back('}');
+}
+
+auto append_json_string_array(std::string &out,
+                              std::vector<std::string> const &values) -> void {
+  out.push_back('[');
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += json_string(values[i]);
+  }
+  out.push_back(']');
+}
+
+auto render_status_json(StatusReport const &report) -> std::string {
+  auto out = std::string{};
+  out += "{";
+  out += std::format("\"version\":{},", json_string(report.version));
+  out += std::format("\"platform\":{{\"name\":{},\"triple\":{}}},",
+                     json_string(report.platform), json_string(report.triple));
+  out += "\"project_config\":{";
+  out += std::format("\"found\":{},",
+                     json_bool(report.project_config.has_value()));
+  out += "\"path\":";
+  out += report.project_config ? json_string(report.project_config->string())
+                               : "null";
+  out += "},";
+
+  out += "\"effective_toolchain\":{";
+  for (std::size_t i = 0; i < report.effective_toolchain.size(); ++i) {
+    auto const &entry = report.effective_toolchain[i];
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += std::format("{}:{{\"version\":{},\"source\":{}}}",
+                       json_string(entry.tool), json_string(entry.version),
+                       json_string(entry.source));
+  }
+  out += "},";
+
+  out += "\"tools\":{";
+  for (std::size_t i = 0; i < report.tools.size(); ++i) {
+    auto const &tool = report.tools[i];
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += std::format("{}:{{\"version\":{},\"installed\":{},\"system\":{},"
+                       "\"path\":{},\"binaries\":",
+                       json_string(tool.tool), json_string(tool.version),
+                       json_bool(tool.installed), json_bool(tool.system),
+                       tool.path.empty() ? std::string{"null"}
+                                         : json_string(tool.path));
+    append_json_string_map(out, tool.binaries);
+    out += "}";
+  }
+  out += "},";
+
+  out += "\"environment\":{";
+  out += std::format("\"available\":{},\"error\":{},\"assignments\":",
+                     json_bool(report.environment.available),
+                     report.environment.error.empty()
+                         ? std::string{"null"}
+                         : json_string(report.environment.error));
+  append_json_string_map(out, report.environment.assignments);
+  out += ",\"path_entries\":";
+  append_json_string_array(out, report.environment.path_entries);
+  out += "},";
+
+  out += std::format("\"network\":{{\"env\":{},\"selected_backend\":{}}},",
+                     report.network.env_value.empty()
+                         ? std::string{"null"}
+                         : json_string(report.network.env_value),
+                     json_string(report.network.selected_backend));
+
+  out += "\"msvc\":{";
+  out += std::format(
+      "\"configured\":{},\"available\":{},\"status\":{},\"bin_dir\":{},\"cl\":{},"
+      "\"windows_sdk_bin_dirs\":",
+      json_bool(report.msvc.configured), json_bool(report.msvc.available),
+      json_string(report.msvc.status),
+      report.msvc.bin_dir.empty() ? std::string{"null"}
+                                  : json_string(report.msvc.bin_dir),
+      report.msvc.cl.empty() ? std::string{"null"}
+                             : json_string(report.msvc.cl));
+  append_json_string_array(out, report.msvc.windows_sdk_bin_dirs);
+  out += "},";
+
+  out += "\"diagnostics\":[";
+  for (std::size_t i = 0; i < report.diagnostics.size(); ++i) {
+    auto const &diagnostic = report.diagnostics[i];
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += std::format(
+        "{{\"severity\":{},\"context\":{},\"message\":{},\"hints\":",
+        json_string(diagnostic_severity_string(diagnostic.severity)),
+        json_string(diagnostic.context), json_string(diagnostic.message));
+    append_json_string_array(out, diagnostic.hints);
+    out += "}";
+  }
+  out += "]}";
+  return out;
+}
+
+auto find_tool_binary(StatusReport const &report, std::string_view tool,
+                      std::string_view binary) -> std::optional<std::string> {
+  for (auto const &status : report.tools) {
+    if (status.tool != tool) {
+      continue;
+    }
+    auto it = status.binaries.find(std::string{binary});
+    if (it != status.binaries.end()) {
+      return it->second;
+    }
+  }
+  return std::nullopt;
+}
+
+auto render_status_human(StatusReport const &report)
+    -> std::vector<std::string> {
+  auto color = stdout_color_enabled();
+  auto lines = std::vector<std::string>{};
+  lines.push_back(intron::section_line("intron", color));
+  lines.push_back(intron::key_value_line("version", report.version));
+  lines.push_back(intron::key_value_line("platform", report.platform));
+  lines.push_back(intron::key_value_line("triple", report.triple));
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("project", color));
+  lines.push_back(intron::key_value_line(
+      "config",
+      report.project_config ? report.project_config->string() : "(not found)"));
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("effective toolchain", color));
+  if (report.effective_toolchain.empty()) {
+    lines.push_back(intron::status_line(cppx::terminal::StatusKind::fail,
+                                        "no entries", color));
+  } else {
+    for (auto const &entry : report.effective_toolchain) {
+      lines.push_back(intron::key_value_line(
+          entry.tool, std::format("{} ({})", entry.version, entry.source)));
+    }
+  }
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("tools", color));
+  if (report.tools.empty()) {
+    lines.push_back(intron::status_line(cppx::terminal::StatusKind::skip,
+                                        "no configured tools", color));
+  } else {
+    for (auto const &tool : report.tools) {
+      lines.push_back(intron::status_line(
+          tool.installed ? cppx::terminal::StatusKind::ok
+                         : cppx::terminal::StatusKind::fail,
+          std::format("{} {} {}", tool.tool, tool.version,
+                      tool.installed ? "installed" : "missing"),
+          color));
+      for (auto const &[name, path] : tool.binaries) {
+        lines.push_back(intron::key_value_line(name, path));
+      }
+    }
+  }
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("resolved binaries", color));
+  auto compiler = std::optional<std::string>{};
+  if (auto cxx = report.environment.assignments.find("CXX");
+      cxx != report.environment.assignments.end()) {
+    compiler = cxx->second;
+  } else if (auto cc = report.environment.assignments.find("CC");
+             cc != report.environment.assignments.end()) {
+    compiler = cc->second;
+  } else if (auto cl = find_tool_binary(report, "msvc", "cl")) {
+    compiler = cl;
+  }
+  lines.push_back(
+      intron::key_value_line("compiler", compiler.value_or("(missing)")));
+  lines.push_back(intron::key_value_line(
+      "cmake",
+      find_tool_binary(report, "cmake", "cmake").value_or("(missing)")));
+  lines.push_back(intron::key_value_line(
+      "ninja",
+      find_tool_binary(report, "ninja", "ninja").value_or("(missing)")));
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("environment", color));
+  if (report.environment.available) {
+    lines.push_back(intron::status_line(cppx::terminal::StatusKind::ok,
+                                        "environment plan resolved", color));
+    lines.push_back(intron::key_value_line(
+        "PATH",
+        report.environment.path_entries.empty()
+            ? "(unchanged)"
+            : std::format(
+                  "{} entr{}", report.environment.path_entries.size(),
+                  report.environment.path_entries.size() == 1 ? "y" : "ies")));
+  } else {
+    lines.push_back(intron::status_line(cppx::terminal::StatusKind::fail,
+                                        report.environment.error, color));
+  }
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("network", color));
+  lines.push_back(
+      intron::key_value_line("backend", report.network.selected_backend));
+  lines.push_back(intron::key_value_line(
+      "env",
+      report.network.env_value.empty()
+          ? "INTRON_NET_BACKEND unset"
+          : std::format("INTRON_NET_BACKEND={}", report.network.env_value)));
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("msvc", color));
+  lines.push_back(intron::key_value_line("status", report.msvc.status));
+  if (!report.msvc.cl.empty()) {
+    lines.push_back(intron::key_value_line("cl", report.msvc.cl));
+  }
+  if (!report.msvc.windows_sdk_bin_dirs.empty()) {
+    lines.push_back(intron::key_value_line(
+        "sdk bins",
+        std::format("{} entr{}", report.msvc.windows_sdk_bin_dirs.size(),
+                    report.msvc.windows_sdk_bin_dirs.size() == 1 ? "y"
+                                                                 : "ies")));
+  }
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("diagnostics", color));
+  if (report.diagnostics.empty()) {
+    lines.push_back(intron::status_line(cppx::terminal::StatusKind::ok,
+                                        "no issues detected", color));
+  } else {
+    for (auto const &diagnostic : report.diagnostics) {
+      lines.push_back(cppx::terminal::format_diagnostic(
+          cppx::terminal::DiagnosticMessage{
+              .severity = diagnostic.severity,
+              .message = diagnostic.message,
+              .context = diagnostic.context,
+              .hints = diagnostic.hints,
+          },
+          color));
+    }
+  }
+  return lines;
+}
+
+auto cmd_status(intron::CommandRequest const &request,
+                intron::RuntimePorts const &ports) -> intron::CommandResult {
+  auto mode = parse_status_output_mode(request.args, request.raw_command);
+  if (!mode) {
+    auto result = intron::CommandResult{.exit_code = 2};
+    auto color = stderr_color_enabled();
+    result.add_stderr(intron::error_line(mode.error(), color));
+    result.add_stderr(intron::hint_line(
+        std::format("run 'intron {} --output human' or '--output json'",
+                    request.raw_command),
+        color));
+    return result;
+  }
+
+  auto report = build_status_report(ports);
+  auto result = intron::CommandResult{};
+  if (*mode == StatusOutputMode::Json) {
+    result.add_stdout(render_status_json(report));
+    return result;
+  }
+
+  for (auto const &line : render_status_human(report)) {
+    result.add_stdout(line);
+  }
+  return result;
+}
+
 auto usage_result(int exit_code) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = exit_code,
@@ -132,6 +931,8 @@ auto command_from_string(std::string_view command) -> std::optional<intron::Comm
     if (command == "use") return intron::CommandKind::Use;
     if (command == "update") return intron::CommandKind::Update;
     if (command == "upgrade") return intron::CommandKind::Upgrade;
+    if (command == "status") return intron::CommandKind::Status;
+    if (command == "doctor") return intron::CommandKind::Doctor;
     if (command == "env") return intron::CommandKind::Env;
     if (command == "exec") return intron::CommandKind::Exec;
     if (command == "self-update") return intron::CommandKind::SelfUpdate;
@@ -987,6 +1788,9 @@ auto run_command(intron::CommandRequest const& request,
         return cmd_update(request, ports);
     case intron::CommandKind::Upgrade:
         return cmd_upgrade(request, ports);
+    case intron::CommandKind::Status:
+    case intron::CommandKind::Doctor:
+        return cmd_status(request, ports);
     case intron::CommandKind::Env:
         return cmd_env(request, ports);
     case intron::CommandKind::Exec:

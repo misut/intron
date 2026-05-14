@@ -40,6 +40,8 @@ enum class CommandKind {
     Use,
     Update,
     Upgrade,
+    Status,
+    Doctor,
     Env,
     Exec,
     SelfUpdate,

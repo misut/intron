@@ -106,6 +106,15 @@ void write_empty_file(std::filesystem::path const& path) {
     write_text_file(path, "");
 }
 
+auto join_lines(std::vector<std::string> const& lines) -> std::string {
+    auto joined = std::string{};
+    for (auto const& line : lines) {
+        joined += line;
+        joined.push_back('\n');
+    }
+    return joined;
+}
+
 struct TestProjectLayout {
     std::filesystem::path base;
     std::filesystem::path home;
@@ -232,6 +241,100 @@ void test_parse_exec_command() {
     }
 }
 
+void test_parse_env_and_which_commands() {
+    auto env_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("env"),
+        const_cast<char*>("--path-only"),
+    };
+    auto env = intron::app::parse_command_request(
+        static_cast<int>(env_argv.size()),
+        env_argv.data());
+    check(env.has_value(), "env command parses successfully");
+    if (env.has_value()) {
+        check(env->command == intron::CommandKind::Env, "env command kind");
+        check(env->args == std::vector<std::string>{"--path-only"},
+              "env command preserves output args");
+    }
+
+    auto which_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("which"),
+        const_cast<char*>("clang++"),
+    };
+    auto which = intron::app::parse_command_request(
+        static_cast<int>(which_argv.size()),
+        which_argv.data());
+    check(which.has_value(), "which command parses successfully");
+    if (which.has_value()) {
+        check(which->command == intron::CommandKind::Which, "which command kind");
+        check(which->args == std::vector<std::string>{"clang++"},
+              "which command preserves binary arg");
+    }
+}
+
+void test_parse_status_and_doctor_commands() {
+    auto status_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("status"),
+        const_cast<char*>("--output"),
+        const_cast<char*>("json"),
+    };
+    auto status = intron::app::parse_command_request(
+        static_cast<int>(status_argv.size()),
+        status_argv.data());
+
+    check(status.has_value(), "status command parses successfully");
+    if (status.has_value()) {
+        check(status->command == intron::CommandKind::Status, "status command kind");
+        check(status->args == std::vector<std::string>{"--output", "json"},
+              "status command preserves output args");
+    }
+
+    auto doctor_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("doctor"),
+    };
+    auto doctor = intron::app::parse_command_request(
+        static_cast<int>(doctor_argv.size()),
+        doctor_argv.data());
+
+    check(doctor.has_value(), "doctor command parses successfully");
+    if (doctor.has_value()) {
+        check(doctor->command == intron::CommandKind::Doctor, "doctor command kind");
+    }
+}
+
+void test_which_run_command_keeps_script_stable_output() {
+    auto layout = make_test_project_layout("intron-test-app-which-stable");
+    auto cleanup = TempDirGuard{layout.base};
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+    write_text_file(
+        layout.project / ".intron.toml",
+        "[toolchain]\n"
+        "llvm = \"22.1.2\"\n");
+    auto clangxx = layout.llvm_bin / "clang++";
+    write_empty_file(clangxx);
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Which,
+        .raw_command = "which",
+        .args = {"clang++"},
+    };
+    auto result = intron::app::run_command(request, {});
+
+    check(result.exit_code == 0, "which exits successfully for fake clang++");
+    check(result.stdout_lines == std::vector<std::string>{clangxx.string()},
+          "which emits only the resolved path");
+    check(result.stderr_lines.empty(), "which emits no stderr on success");
+}
+
 void test_platform_arg_split() {
     auto args = std::vector<std::string>{
         "llvm",
@@ -272,6 +375,176 @@ void test_parse_exec_args() {
     check(!intron::parse_exec_args({}).has_value(), "empty exec args fail");
     check(!intron::parse_exec_args({"--"}).has_value(), "separator-only exec args fail");
     check(!intron::parse_exec_args({"cmake"}).has_value(), "missing separator exec args fail");
+}
+
+void test_status_rejects_invalid_output_mode() {
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Status,
+        .raw_command = "status",
+        .args = {"--output", "xml"},
+    };
+    auto result = intron::app::run_command(request, {});
+
+    check(result.exit_code == 2, "status rejects invalid output mode");
+    check(join_lines(result.stderr_lines).contains("invalid output mode 'xml'"),
+          "status invalid output error names the value");
+}
+
+void test_status_json_reports_project_tools_and_network_backend() {
+    auto layout = make_test_project_layout("intron-test-status-json");
+    auto cleanup = TempDirGuard{layout.base};
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto net_guard = EnvGuard{"INTRON_NET_BACKEND"};
+    auto cwd_guard = CurrentPathGuard{};
+
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    set_env("INTRON_NET_BACKEND", "shell");
+    std::filesystem::current_path(layout.project);
+
+    write_text_file(
+        layout.project / ".intron.toml",
+        "[toolchain]\n"
+        "cmake = \"4.3.1\"\n"
+        "ninja = \"1.13.2\"\n");
+    auto cmake_bin = layout.intron_home / "toolchains" / "cmake" / "4.3.1" / "bin";
+    write_empty_file(cmake_bin / "cmake");
+
+    auto ports = intron::RuntimePorts{};
+    ports.filesystem.exists = [](std::filesystem::path const& path) {
+        return std::filesystem::exists(path);
+    };
+    ports.environment.get = [](std::string_view key) -> std::optional<std::string> {
+        auto owned = std::string{key};
+        if (auto* value = std::getenv(owned.c_str()); value) {
+            return std::string{value};
+        }
+        return std::nullopt;
+    };
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Status,
+        .raw_command = "status",
+        .args = {"--output=json"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "status json exits successfully");
+    check(result.stdout_lines.size() == 1, "status json is emitted as one line");
+    if (!result.stdout_lines.empty()) {
+        auto const& json = result.stdout_lines.front();
+        check(json.contains(R"("version":)"), "json includes version");
+        check(json.contains(R"("platform":{"name":)"), "json includes platform object");
+        check(json.contains(R"("project_config":{"found":true)"),
+              "json reports project config");
+        check(json.contains(R"("effective_toolchain":{)"),
+              "json includes effective_toolchain");
+        check(json.contains(R"("cmake":{"version":"4.3.1")"),
+              "json includes cmake version");
+        check(json.contains(R"("ninja":{"version":"1.13.2")"),
+              "json includes ninja version");
+        check(json.contains(R"("tools":{)"), "json includes tools");
+        check(json.contains(R"("cmake":{"version":"4.3.1","installed":true)"),
+              "json reports installed cmake");
+        check(json.contains(R"("ninja":{"version":"1.13.2","installed":false)"),
+              "json reports missing ninja");
+        check(json.contains(R"("network":{"env":"shell","selected_backend":"shell"})"),
+              "json reports network backend");
+        check(json.contains(R"("environment":{"available":true)"),
+              "json reports environment status");
+        check(json.contains(R"("msvc":{)"), "json includes msvc");
+        check(json.contains(R"("cl":null)"), "json reports null msvc cl on non-Windows");
+        check(json.contains(R"("diagnostics":[)"), "json includes diagnostics");
+        check(json.contains("ninja 1.13.2 is not installed"),
+              "json diagnostics report missing tool");
+    }
+}
+
+void test_status_human_reports_missing_project_config_with_hint() {
+    auto layout = make_test_project_layout("intron-test-status-human-no-config");
+    auto cleanup = TempDirGuard{layout.base};
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+
+    auto ports = intron::RuntimePorts{};
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Doctor,
+        .raw_command = "doctor",
+        .args = {"--output", "human"},
+    };
+    auto result = intron::app::run_command(request, ports);
+    auto joined = join_lines(result.stdout_lines);
+
+    check(result.exit_code == 0, "doctor human exits successfully");
+    check(joined.contains("project config .intron.toml was not found"),
+          "doctor reports missing project config");
+    check(joined.contains("hint: run 'intron use' from a project after setting defaults"),
+          "doctor includes actionable project config hint");
+    check(joined.contains("no effective toolchain entries"),
+          "doctor reports empty effective toolchain");
+}
+
+void test_status_reports_windows_msvc_through_ports() {
+#ifdef _WIN32
+    auto layout = make_test_project_layout("intron-test-status-msvc");
+    auto cleanup = TempDirGuard{layout.base};
+    auto home_guard = EnvGuard{"HOME"};
+    auto userprofile_guard = EnvGuard{"USERPROFILE"};
+    auto cwd_guard = CurrentPathGuard{};
+    auto fake_sdk_bin = layout.base / "fake-sdk" / "10.0.FAKE.0" / "x64";
+    auto expected_msvc = make_fake_msvc_environment(layout.base);
+
+    set_env("HOME", layout.home.string());
+    set_env("USERPROFILE", layout.home.string());
+    std::filesystem::current_path(layout.project);
+    write_text_file(
+        layout.project / ".intron.toml",
+        "[toolchain.windows]\n"
+        "msvc = \"2022\"\n");
+
+    auto ports = intron::RuntimePorts{};
+    ports.environment.home_dir = [home = layout.home] {
+        return std::optional<std::filesystem::path>{home};
+    };
+    ports.toolchain.msvc_environment = [expected_msvc] {
+        return std::optional<intron::MsvcEnvironment>{expected_msvc};
+    };
+    ports.toolchain.windows_sdk_bin_dirs = [fake_sdk_bin](std::optional<std::string>) {
+        return std::vector<std::filesystem::path>{fake_sdk_bin};
+    };
+
+    auto request = intron::CommandRequest{
+        .command = intron::CommandKind::Status,
+        .raw_command = "status",
+        .args = {"--output", "json"},
+    };
+    auto result = intron::app::run_command(request, ports);
+
+    check(result.exit_code == 0, "windows status exits successfully with fake msvc");
+    check(!result.stdout_lines.empty(), "windows status produces json");
+    if (!result.stdout_lines.empty()) {
+        auto const& json = result.stdout_lines.front();
+        check(json.contains(R"("msvc":{"configured":true,"available":true)"),
+              "json reports configured and available msvc");
+        check(json.contains(expected_msvc.cl.string()),
+              "json includes fake cl path");
+        check(json.contains(fake_sdk_bin.string()),
+              "json includes fake SDK bin dir");
+    }
+#endif
 }
 
 void test_tool_lookup() {
@@ -1172,8 +1445,15 @@ int main() {
     test_parse_unknown_command();
     test_parse_help_command();
     test_parse_exec_command();
+    test_parse_env_and_which_commands();
+    test_parse_status_and_doctor_commands();
     test_platform_arg_split();
     test_parse_exec_args();
+    test_which_run_command_keeps_script_stable_output();
+    test_status_rejects_invalid_output_mode();
+    test_status_json_reports_project_tools_and_network_backend();
+    test_status_human_reports_missing_project_config_with_hint();
+    test_status_reports_windows_msvc_through_ports();
     test_tool_lookup();
     test_build_tool_map();
     test_update_msvc_uses_explicit_status_path();
