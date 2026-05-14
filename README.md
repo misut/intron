@@ -218,6 +218,12 @@ shell-eval form is unwanted (for example, GitHub Actions, where reassigning
 `intron exec -- <command>` is unaffected; it always injects the resolved
 variables directly into the child process environment.
 
+`intron commands [--output human|json]` exposes the command registry used by
+the built-in completion engine. `intron complete [--output human|json|raw] --
+[words...]` prints candidates for a partial invocation, and `intron completion
+bash|zsh|fish` emits shell completion scripts that call that same command at
+completion time.
+
 ## Commands
 
 | Command | Description |
@@ -230,6 +236,9 @@ variables directly into the child process environment.
 | `intron use [tool] [version] [--platform <name>]` | Set project toolchain in `.intron.toml` |
 | `intron env [--path-only\|--github]` | Print environment variables (`eval "$(intron env)"` or PowerShell `Invoke-Expression ((intron env) -join "`n")`) |
 | `intron exec -- <command> [args...]` | Run a command with the resolved intron environment |
+| `intron commands [--output human\|json]` | Describe command metadata |
+| `intron complete [--output human\|json\|raw] -- [words...]` | Print completion candidates |
+| `intron completion bash\|zsh\|fish` | Generate a shell completion script |
 | `intron update [tool]` | Check for newer versions |
 | `intron upgrade [tool]` | Upgrade tools to latest |
 | `intron self-update` | Update intron itself |

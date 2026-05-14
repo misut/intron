@@ -1,6 +1,7 @@
 #include <cstdlib>
 
 import std;
+import cppx.cli;
 import cppx.terminal;
 import intron.app;
 import config;
@@ -303,6 +304,155 @@ void test_parse_status_and_doctor_commands() {
     if (doctor.has_value()) {
         check(doctor->command == intron::CommandKind::Doctor, "doctor command kind");
     }
+}
+
+void test_parse_cli_metadata_commands() {
+    auto commands_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("commands"),
+        const_cast<char*>("--output"),
+        const_cast<char*>("json"),
+    };
+    auto commands = intron::app::parse_command_request(
+        static_cast<int>(commands_argv.size()),
+        commands_argv.data());
+
+    check(commands.has_value(), "commands command parses successfully");
+    if (commands.has_value()) {
+        check(commands->command == intron::CommandKind::Commands,
+              "commands command kind");
+        check(commands->args == std::vector<std::string>{"--output", "json"},
+              "commands command preserves output args");
+    }
+
+    auto complete_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("complete"),
+        const_cast<char*>("--output"),
+        const_cast<char*>("raw"),
+        const_cast<char*>("--"),
+        const_cast<char*>("status"),
+        const_cast<char*>("--output"),
+        const_cast<char*>("j"),
+    };
+    auto complete = intron::app::parse_command_request(
+        static_cast<int>(complete_argv.size()),
+        complete_argv.data());
+
+    check(complete.has_value(), "complete command parses successfully");
+    if (complete.has_value()) {
+        check(complete->command == intron::CommandKind::Complete,
+              "complete command kind");
+        check(complete->args == std::vector<std::string>{
+                  "--output", "raw", "--", "status", "--output", "j"},
+              "complete command preserves completion words");
+    }
+
+    auto completion_argv = std::array{
+        const_cast<char*>("intron"),
+        const_cast<char*>("completion"),
+        const_cast<char*>("bash"),
+    };
+    auto completion = intron::app::parse_command_request(
+        static_cast<int>(completion_argv.size()),
+        completion_argv.data());
+
+    check(completion.has_value(), "completion command parses successfully");
+    if (completion.has_value()) {
+        check(completion->command == intron::CommandKind::Completion,
+              "completion command kind");
+        check(completion->args == std::vector<std::string>{"bash"},
+              "completion command preserves shell arg");
+    }
+}
+
+void test_cli_metadata_and_completion_spec() {
+    auto names = cppx::cli::command_names(intron::app::command_spec());
+    check(std::ranges::find(names, "commands") != names.end(),
+          "command spec includes commands");
+    check(std::ranges::find(names, "complete") != names.end(),
+          "command spec includes complete");
+    check(std::ranges::find(names, "completion") != names.end(),
+          "command spec includes completion");
+
+    auto top_level = intron::app::complete_words({"intron", "com"});
+    auto has_complete = std::ranges::any_of(
+        top_level.candidates,
+        [](cppx::cli::CompletionCandidate const& candidate) {
+            return candidate.value == "complete" &&
+                   candidate.kind == cppx::cli::CompletionKind::command;
+        });
+    check(has_complete, "completion normalizes intron prefix");
+
+    auto output_values =
+        intron::app::complete_words({"status", "--output", "j"});
+    auto has_json = std::ranges::any_of(
+        output_values.candidates,
+        [](cppx::cli::CompletionCandidate const& candidate) {
+            return candidate.value == "json" &&
+                   candidate.kind == cppx::cli::CompletionKind::option_value;
+        });
+    check(has_json, "completion suggests status json output");
+
+    auto platform_values =
+        intron::app::complete_words({"default", "--platform", "w"});
+    auto has_windows = std::ranges::any_of(
+        platform_values.candidates,
+        [](cppx::cli::CompletionCandidate const& candidate) {
+            return candidate.value == "windows" &&
+                   candidate.kind == cppx::cli::CompletionKind::option_value;
+        });
+    check(has_windows, "completion suggests platform values");
+}
+
+void test_cli_metadata_commands_run() {
+    auto commands = intron::app::run_command(
+        intron::CommandRequest{
+            .command = intron::CommandKind::Commands,
+            .raw_command = "commands",
+            .args = {"--output", "json"},
+        },
+        {});
+
+    check(commands.exit_code == 0, "commands json exits successfully");
+    check(commands.stdout_lines.size() == 1, "commands json emits one line");
+    if (!commands.stdout_lines.empty()) {
+        check(commands.stdout_lines.front().contains("\"commands\""),
+              "commands json contains command catalog");
+        check(commands.stdout_lines.front().contains("\"complete\""),
+              "commands json includes completion metadata");
+        check(commands.stdout_lines.front().contains("\"value_hints\":[\"human\",\"json\"]"),
+              "commands json includes output value hints");
+    }
+
+    auto complete = intron::app::run_command(
+        intron::CommandRequest{
+            .command = intron::CommandKind::Complete,
+            .raw_command = "complete",
+            .args = {"--output", "raw", "--", "status", "--output", "j"},
+        },
+        {});
+
+    check(complete.exit_code == 0, "complete raw exits successfully");
+    check(complete.stdout_lines == std::vector<std::string>{"json"},
+          "complete raw emits only matching candidates");
+
+    auto completion = intron::app::run_command(
+        intron::CommandRequest{
+            .command = intron::CommandKind::Completion,
+            .raw_command = "completion",
+            .args = {"bash"},
+        },
+        {});
+
+    check(completion.exit_code == 0, "completion bash exits successfully");
+    auto joined = std::string{};
+    for (auto const& line : completion.stdout_lines) {
+        joined += line;
+        joined.push_back('\n');
+    }
+    check(joined.contains("intron complete --output raw"),
+          "completion script calls intron complete");
 }
 
 void test_which_run_command_keeps_script_stable_output() {
@@ -1447,6 +1597,9 @@ int main() {
     test_parse_exec_command();
     test_parse_env_and_which_commands();
     test_parse_status_and_doctor_commands();
+    test_parse_cli_metadata_commands();
+    test_cli_metadata_and_completion_spec();
+    test_cli_metadata_commands_run();
     test_platform_arg_split();
     test_parse_exec_args();
     test_which_run_command_keeps_script_stable_output();

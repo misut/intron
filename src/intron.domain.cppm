@@ -44,6 +44,9 @@ enum class CommandKind {
     Doctor,
     Env,
     Exec,
+    Commands,
+    Complete,
+    Completion,
     SelfUpdate,
     Help,
 };
