@@ -21,6 +21,15 @@ void test_status_and_stage_lines() {
           "stage line includes index, total, context, and stage");
 }
 
+void test_diagnostic_lines_use_terminal_primitives() {
+    check(intron::error_line("missing tool") == "error: missing tool",
+          "error line uses diagnostic label");
+    check(intron::warning_line("missing config") == "warning: missing config",
+          "warning line uses diagnostic label");
+    check(intron::hint_line("run intron use") == "hint: run intron use",
+          "hint line uses terminal hint formatter");
+}
+
 void test_usage_documents_human_color_controls() {
     auto lines = intron::usage_lines("0.21.2");
     auto joined = std::string{};
@@ -30,6 +39,10 @@ void test_usage_documents_human_color_controls() {
     }
 
     check(joined.contains("Commands:"), "usage keeps command section");
+    check(joined.contains("status  [--output human|json]"),
+          "usage documents status diagnostics");
+    check(joined.contains("doctor  [--output human|json]"),
+          "usage documents doctor diagnostics");
     check(joined.contains("Output:"), "usage includes output section");
     check(joined.contains("INTRON_COLOR=auto|always|never"),
           "usage documents INTRON_COLOR");
@@ -67,6 +80,7 @@ void test_msvc_rendering() {
 
 int main() {
     test_status_and_stage_lines();
+    test_diagnostic_lines_use_terminal_primitives();
     test_usage_documents_human_color_controls();
     test_update_rendering();
     test_msvc_rendering();
