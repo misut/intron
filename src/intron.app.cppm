@@ -99,6 +99,218 @@ auto add_missing_msvc_result(intron::CommandResult& result) -> void {
     result.add_stderr(intron::hint_line("run 'intron install msvc 2022'", color));
 }
 
+namespace cxcli = cppx::cli;
+
+auto make_flag(std::string name, std::string description,
+               std::string category = {}) -> cxcli::OptionSpec {
+  return {
+      .name = std::move(name),
+      .description = std::move(description),
+      .category = std::move(category),
+  };
+}
+
+auto make_option(std::string name, std::string value_name,
+                 std::string description,
+                 std::vector<std::string> value_hints = {},
+                 std::string category = {}) -> cxcli::OptionSpec {
+  return {
+      .name = std::move(name),
+      .arity = cxcli::OptionArity::one,
+      .value_name = std::move(value_name),
+      .description = std::move(description),
+      .category = std::move(category),
+      .value_hints = std::move(value_hints),
+  };
+}
+
+auto platform_hints() -> std::vector<std::string> {
+  return {"linux", "macos", "windows"};
+}
+
+auto output_hints() -> std::vector<std::string> {
+  return {"human", "json"};
+}
+
+auto completion_output_hints() -> std::vector<std::string> {
+  return {"human", "json", "raw"};
+}
+
+auto platform_option() -> cxcli::OptionSpec {
+  return make_option("platform", "name", "target a platform section",
+                     platform_hints(), "config");
+}
+
+auto command_spec_impl() -> cxcli::CommandSpec const& {
+  static const auto spec = cxcli::CommandSpec{
+      .name = "intron",
+      .summary = "C++ toolchain installer and environment resolver",
+      .subcommands =
+          {
+              cxcli::CommandSpec{
+                  .name = "install",
+                  .summary = "Install toolchain(s)",
+                  .category = "toolchain",
+                  .positional_name = "tool version",
+                  .positional_description =
+                      "optional tool and version; reads .intron.toml if omitted",
+                  .examples = {"intron install", "intron install llvm 22.1.2",
+                               "intron install msvc 2022"},
+              },
+              cxcli::CommandSpec{
+                  .name = "remove",
+                  .summary = "Remove a toolchain",
+                  .category = "toolchain",
+                  .positional_name = "tool version",
+                  .positional_description = "installed tool and version",
+              },
+              cxcli::CommandSpec{
+                  .name = "list",
+                  .summary = "List installed toolchains",
+                  .allow_positionals = false,
+                  .category = "toolchain",
+              },
+              cxcli::CommandSpec{
+                  .name = "which",
+                  .summary = "Print the path to a binary",
+                  .category = "environment",
+                  .positional_name = "binary",
+                  .positional_description = "toolchain binary name",
+                  .examples = {"intron which clang++", "intron which cmake"},
+              },
+              cxcli::CommandSpec{
+                  .name = "default",
+                  .summary = "Set a global default toolchain version",
+                  .options = {platform_option()},
+                  .category = "config",
+                  .positional_name = "tool version",
+                  .positional_description = "tool and version",
+                  .examples = {"intron default llvm 22.1.2",
+                               "intron default msvc 2022 --platform windows"},
+              },
+              cxcli::CommandSpec{
+                  .name = "use",
+                  .summary = "Set project toolchain configuration",
+                  .options = {platform_option()},
+                  .category = "config",
+                  .positional_name = "tool version",
+                  .positional_description =
+                      "optional tool and version; copies current defaults if omitted",
+                  .examples = {"intron use", "intron use llvm 22.1.2"},
+              },
+              cxcli::CommandSpec{
+                  .name = "update",
+                  .summary = "Check for newer versions",
+                  .category = "toolchain",
+                  .positional_name = "tool",
+                  .positional_description = "optional installed tool",
+                  .examples = {"intron update", "intron update msvc"},
+              },
+              cxcli::CommandSpec{
+                  .name = "upgrade",
+                  .summary = "Upgrade tools to latest versions",
+                  .category = "toolchain",
+                  .positional_name = "tool",
+                  .positional_description = "optional installed tool",
+                  .examples = {"intron upgrade", "intron upgrade msvc"},
+              },
+              cxcli::CommandSpec{
+                  .name = "status",
+                  .summary = "Show toolchain diagnostics",
+                  .options = {make_option("output", "mode", "select output format",
+                                          output_hints(), "output")},
+                  .allow_positionals = false,
+                  .category = "diagnostics",
+              },
+              cxcli::CommandSpec{
+                  .name = "doctor",
+                  .summary = "Alias for status diagnostics",
+                  .options = {make_option("output", "mode", "select output format",
+                                          output_hints(), "output")},
+                  .allow_positionals = false,
+                  .category = "diagnostics",
+              },
+              cxcli::CommandSpec{
+                  .name = "env",
+                  .summary = "Print environment variables",
+                  .options =
+                      {
+                          make_flag("path-only", "print only PATH additions",
+                                    "environment"),
+                          make_flag("additive", "alias for --path-only",
+                                    "environment"),
+                          make_flag("github", "print GitHub Actions records",
+                                    "environment"),
+                      },
+                  .allow_positionals = false,
+                  .category = "environment",
+              },
+              cxcli::CommandSpec{
+                  .name = "exec",
+                  .summary = "Run a command with the intron environment",
+                  .category = "environment",
+                  .positional_name = "command",
+                  .positional_description = "command and args after --",
+                  .examples = {"intron exec -- cmake --version",
+                               "intron exec -- exon test"},
+              },
+              cxcli::CommandSpec{
+                  .name = "self-update",
+                  .summary = "Update intron itself",
+                  .allow_positionals = false,
+                  .category = "maintenance",
+              },
+              cxcli::CommandSpec{
+                  .name = "help",
+                  .aliases = {"--help", "-h"},
+                  .summary = "Show usage information",
+                  .allow_positionals = false,
+                  .category = "cli",
+              },
+              cxcli::CommandSpec{
+                  .name = "commands",
+                  .summary = "Describe intron command metadata",
+                  .options = {make_option("output", "mode", "select output format",
+                                          output_hints(), "output")},
+                  .allow_positionals = false,
+                  .category = "cli",
+              },
+              cxcli::CommandSpec{
+                  .name = "complete",
+                  .summary = "Print completion candidates for a partial invocation",
+                  .options = {make_option("output", "mode",
+                                          "select completion output format",
+                                          completion_output_hints(), "output")},
+                  .category = "cli",
+                  .positional_name = "words",
+                  .positional_description =
+                      "current intron words after --; final word is the prefix",
+                  .examples = {"intron complete -- install",
+                               "intron complete --output json -- status --output j"},
+              },
+              cxcli::CommandSpec{
+                  .name = "completion",
+                  .summary = "Generate a shell completion script",
+                  .category = "cli",
+                  .positional_name = "shell",
+                  .positional_description = "bash, zsh, or fish",
+                  .examples = {"intron completion bash", "intron completion zsh"},
+              },
+          },
+      .allow_positionals = false,
+  };
+  return spec;
+}
+
+auto find_command_spec(std::string_view name) -> cxcli::CommandSpec const& {
+  for (auto const &command : command_spec_impl().subcommands) {
+    if (command.name == name) {
+      return command;
+    }
+  }
+  throw std::runtime_error(std::format("unknown command spec: {}", name));
+}
+
 enum class StatusOutputMode {
   Human,
   Json,
@@ -161,22 +373,8 @@ struct StatusReport {
   std::vector<StatusDiagnostic> diagnostics;
 };
 
-auto status_command_spec(std::string_view command) -> cppx::cli::CommandSpec {
-  return cppx::cli::CommandSpec{
-      .name = std::string{command},
-      .summary = "Show toolchain diagnostics",
-      .options =
-          {
-              cppx::cli::OptionSpec{
-                  .name = "output",
-                  .arity = cppx::cli::OptionArity::one,
-                  .value_name = "mode",
-                  .description = "Output mode",
-                  .value_hints = {"human", "json"},
-              },
-          },
-      .allow_positionals = false,
-  };
+auto status_command_spec(std::string_view command) -> cxcli::CommandSpec const& {
+  return find_command_spec(command);
 }
 
 auto parse_status_output_mode(std::vector<std::string> const &args,
@@ -638,6 +836,136 @@ auto append_json_string_array(std::string &out,
   out.push_back(']');
 }
 
+auto json_string_array(std::vector<std::string> const &values) -> std::string {
+  auto out = std::string{};
+  append_json_string_array(out, values);
+  return out;
+}
+
+auto option_arity_text(cxcli::OptionArity arity) -> std::string_view {
+  switch (arity) {
+  case cxcli::OptionArity::none:
+    return "none";
+  case cxcli::OptionArity::one:
+    return "one";
+  }
+  return "none";
+}
+
+auto completion_kind_text(cxcli::CompletionKind kind) -> std::string_view {
+  switch (kind) {
+  case cxcli::CompletionKind::command:
+    return "command";
+  case cxcli::CompletionKind::option:
+    return "option";
+  case cxcli::CompletionKind::option_value:
+    return "option_value";
+  case cxcli::CompletionKind::positional:
+    return "positional";
+  }
+  return "command";
+}
+
+auto option_metadata_json(cxcli::OptionSpec const &option) -> std::string {
+  auto out = std::format(
+      "{{\"name\":{},\"arity\":{},\"repeatable\":{},\"required\":{}",
+      json_string(option.name), json_string(option_arity_text(option.arity)),
+      json_bool(option.repeatable), json_bool(option.required));
+  if (option.short_name != '\0') {
+    out += std::format(",\"short_name\":{}",
+                       json_string(std::string{option.short_name}));
+  } else {
+    out += ",\"short_name\":null";
+  }
+  out += std::format(
+      ",\"value_name\":{},\"description\":{},\"category\":{},\"value_hints\":{},\"hidden\":{}}}",
+      json_string(option.value_name), json_string(option.description),
+      json_string(option.category), json_string_array(option.value_hints),
+      json_bool(option.hidden));
+  return out;
+}
+
+auto option_metadata_array_json(std::vector<cxcli::OptionSpec> const &options)
+    -> std::string {
+  auto out = std::string{"["};
+  for (std::size_t i = 0; i < options.size(); ++i) {
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += option_metadata_json(options[i]);
+  }
+  out.push_back(']');
+  return out;
+}
+
+auto command_metadata_json(cxcli::CommandSpec const &command) -> std::string {
+  return std::format(
+      "{{\"name\":{},\"aliases\":{},\"summary\":{},\"description\":{},"
+      "\"category\":{},\"positional_name\":{},\"positional_description\":{},"
+      "\"allow_positionals\":{},\"hidden\":{},\"examples\":{},\"options\":{}}}",
+      json_string(command.name), json_string_array(command.aliases),
+      json_string(command.summary), json_string(command.description),
+      json_string(command.category), json_string(command.positional_name),
+      json_string(command.positional_description),
+      json_bool(command.allow_positionals), json_bool(command.hidden),
+      json_string_array(command.examples),
+      option_metadata_array_json(command.options));
+}
+
+auto command_catalog_json(cxcli::CommandSpec const &root = command_spec_impl())
+    -> std::string {
+  auto out = std::string{"["};
+  auto first = true;
+  for (auto const &command : root.subcommands) {
+    if (command.hidden) {
+      continue;
+    }
+    if (!first) {
+      out.push_back(',');
+    }
+    first = false;
+    out += command_metadata_json(command);
+  }
+  out.push_back(']');
+  return out;
+}
+
+auto completion_context_json(cxcli::CompletionContext const &context)
+    -> std::string {
+  return std::format(
+      "{{\"command_path\":{},\"after_terminator\":{},\"expects_option_value\":{},\"option_name\":{}}}",
+      json_string_array(context.command_path),
+      json_bool(context.after_terminator),
+      json_bool(context.expects_option_value),
+      json_string(context.option_name));
+}
+
+auto completion_candidate_json(cxcli::CompletionCandidate const &candidate)
+    -> std::string {
+  return std::format(
+      "{{\"kind\":{},\"value\":{},\"description\":{},\"value_name\":{},"
+      "\"category\":{},\"append_space\":{}}}",
+      json_string(completion_kind_text(candidate.kind)),
+      json_string(candidate.value),
+      json_string(candidate.description),
+      json_string(candidate.value_name),
+      json_string(candidate.category),
+      json_bool(candidate.append_space));
+}
+
+auto completion_candidates_json(
+    std::vector<cxcli::CompletionCandidate> const &candidates) -> std::string {
+  auto out = std::string{"["};
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += completion_candidate_json(candidates[i]);
+  }
+  out.push_back(']');
+  return out;
+}
+
 auto render_status_json(StatusReport const &report) -> std::string {
   auto out = std::string{};
   out += "{";
@@ -897,6 +1225,289 @@ auto cmd_status(intron::CommandRequest const &request,
   return result;
 }
 
+auto string_views(std::vector<std::string> const &args)
+    -> std::vector<std::string_view> {
+  auto views = std::vector<std::string_view>{};
+  views.reserve(args.size());
+  for (auto const &arg : args) {
+    views.push_back(arg);
+  }
+  return views;
+}
+
+auto parse_human_json_output(std::vector<std::string> const &args,
+                             std::string_view command)
+    -> std::expected<StatusOutputMode, std::string> {
+  auto parsed = cxcli::parse(find_command_spec(command), string_views(args));
+  if (!parsed) {
+    return std::unexpected(parsed.error().message);
+  }
+  auto output = parsed->value("output").value_or("human");
+  if (output == "human") {
+    return StatusOutputMode::Human;
+  }
+  if (output == "json") {
+    return StatusOutputMode::Json;
+  }
+  return std::unexpected(
+      std::format("invalid output mode '{}' (expected: human, json)", output));
+}
+
+enum class CompletionOutputMode {
+  Human,
+  Json,
+  Raw,
+};
+
+auto parse_completion_output(std::string_view value)
+    -> std::expected<CompletionOutputMode, std::string> {
+  if (value == "human") {
+    return CompletionOutputMode::Human;
+  }
+  if (value == "json") {
+    return CompletionOutputMode::Json;
+  }
+  if (value == "raw") {
+    return CompletionOutputMode::Raw;
+  }
+  return std::unexpected(
+      std::format("invalid output mode '{}' (expected: human, json, raw)",
+                  value));
+}
+
+struct CompletionInvocation {
+  CompletionOutputMode output = CompletionOutputMode::Human;
+  std::vector<std::string> words;
+};
+
+auto parse_completion_invocation(std::vector<std::string> const &args)
+    -> std::expected<CompletionInvocation, std::string> {
+  auto invocation = CompletionInvocation{};
+  auto passthrough = false;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    auto token = std::string_view{args[i]};
+    if (passthrough) {
+      invocation.words.emplace_back(token);
+      continue;
+    }
+    if (token == "--") {
+      passthrough = true;
+      continue;
+    }
+    if (token == "--output") {
+      if (i + 1 >= args.size()) {
+        return std::unexpected("--output requires a value");
+      }
+      auto output = parse_completion_output(args[++i]);
+      if (!output) {
+        return std::unexpected(std::move(output.error()));
+      }
+      invocation.output = *output;
+      continue;
+    }
+    if (token.starts_with("--output=")) {
+      auto output = parse_completion_output(token.substr(9));
+      if (!output) {
+        return std::unexpected(std::move(output.error()));
+      }
+      invocation.output = *output;
+      continue;
+    }
+    invocation.words.emplace_back(token);
+  }
+  return invocation;
+}
+
+auto normalize_completion_words(std::vector<std::string> words)
+    -> std::vector<std::string> {
+  if (!words.empty() && words.front() == "intron") {
+    words.erase(words.begin());
+  }
+  return words;
+}
+
+auto complete_words_impl(std::vector<std::string> words)
+    -> cxcli::CompletionResult {
+  words = normalize_completion_words(std::move(words));
+  auto prefix = std::string_view{};
+  auto args = std::vector<std::string_view>{};
+  if (!words.empty()) {
+    prefix = words.back();
+    args.reserve(words.size() - 1);
+    for (std::size_t i = 0; i + 1 < words.size(); ++i) {
+      args.push_back(words[i]);
+    }
+  }
+  return cxcli::complete(command_spec_impl(), args, prefix);
+}
+
+auto print_command_metadata_human(cxcli::CommandSpec const &root)
+    -> std::vector<std::string> {
+  auto lines = std::vector<std::string>{};
+  lines.push_back(std::format("{:<12} {:<13} {}", "command", "category",
+                              "summary"));
+  for (auto const &command : root.subcommands) {
+    if (command.hidden) {
+      continue;
+    }
+    auto name = command.name;
+    if (!command.aliases.empty()) {
+      auto aliases = std::string{};
+      for (std::size_t i = 0; i < command.aliases.size(); ++i) {
+        if (i != 0) {
+          aliases += ",";
+        }
+        aliases += command.aliases[i];
+      }
+      name += std::format(" ({})", aliases);
+    }
+    lines.push_back(
+        std::format("{:<12} {:<13} {}", name, command.category,
+                    command.summary));
+  }
+  return lines;
+}
+
+auto add_multiline_stdout(intron::CommandResult &result, std::string_view text)
+    -> void {
+  auto start = std::size_t{0};
+  while (start < text.size()) {
+    auto end = text.find('\n', start);
+    if (end == std::string_view::npos) {
+      result.add_stdout(text.substr(start));
+      return;
+    }
+    result.add_stdout(text.substr(start, end - start));
+    start = end + 1;
+  }
+}
+
+auto cmd_commands(intron::CommandRequest const &request)
+    -> intron::CommandResult {
+  auto mode = parse_human_json_output(request.args, "commands");
+  if (!mode) {
+    auto result = intron::CommandResult{.exit_code = 2};
+    result.add_stderr(intron::error_line(mode.error(), stderr_color_enabled()));
+    return result;
+  }
+
+  auto result = intron::CommandResult{};
+  if (*mode == StatusOutputMode::Json) {
+    result.add_stdout(std::format("{{\"version\":{},\"commands\":{}}}",
+                                  json_string(intron_version),
+                                  command_catalog_json()));
+    return result;
+  }
+
+  for (auto const &line : print_command_metadata_human(command_spec_impl())) {
+    result.add_stdout(line);
+  }
+  return result;
+}
+
+auto cmd_complete(intron::CommandRequest const &request)
+    -> intron::CommandResult {
+  auto invocation = parse_completion_invocation(request.args);
+  if (!invocation) {
+    auto result = intron::CommandResult{.exit_code = 2};
+    result.add_stderr(intron::error_line(invocation.error(),
+                                         stderr_color_enabled()));
+    return result;
+  }
+
+  auto completion = complete_words_impl(std::move(invocation->words));
+  auto result = intron::CommandResult{};
+  if (invocation->output == CompletionOutputMode::Json) {
+    result.add_stdout(std::format("{{\"context\":{},\"candidates\":{}}}",
+                                  completion_context_json(completion.context),
+                                  completion_candidates_json(
+                                      completion.candidates)));
+    return result;
+  }
+
+  for (auto const &candidate : completion.candidates) {
+    if (invocation->output == CompletionOutputMode::Raw ||
+        candidate.description.empty()) {
+      result.add_stdout(candidate.value);
+    } else {
+      result.add_stdout(
+          std::format("{}\t{}", candidate.value, candidate.description));
+    }
+  }
+  return result;
+}
+
+auto bash_completion_script() -> std::string {
+  return R"(# bash completion for intron
+_intron_complete()
+{
+    local -a candidates
+    mapfile -t candidates < <(intron complete --output raw -- "${COMP_WORDS[@]:1}")
+    COMPREPLY=("${candidates[@]}")
+}
+
+complete -F _intron_complete intron
+)";
+}
+
+auto zsh_completion_script() -> std::string {
+  return R"(#compdef intron
+_intron()
+{
+    local -a candidates
+    candidates=("${(@f)$(intron complete --output raw -- ${words[@]:2})}")
+    compadd -a candidates
+}
+
+_intron "$@"
+)";
+}
+
+auto fish_completion_script() -> std::string {
+  return R"(function __intron_complete
+    set -l tokens (commandline -opc)
+    set -e tokens[1]
+    set -l current (commandline -ct)
+    if test (count $tokens) -gt 0
+        set tokens[-1] $current
+    else
+        set tokens $current
+    end
+    intron complete --output raw -- $tokens
+end
+
+complete -c intron -f -a '(__intron_complete)'
+)";
+}
+
+auto cmd_completion(intron::CommandRequest const &request)
+    -> intron::CommandResult {
+  auto result = intron::CommandResult{};
+  if (request.args.size() != 1) {
+    result.exit_code = 1;
+    result.add_stderr(intron::error_line(
+        "usage: intron completion bash|zsh|fish",
+        stderr_color_enabled()));
+    return result;
+  }
+
+  auto shell = std::string_view{request.args.front()};
+  if (shell == "bash") {
+    add_multiline_stdout(result, bash_completion_script());
+  } else if (shell == "zsh") {
+    add_multiline_stdout(result, zsh_completion_script());
+  } else if (shell == "fish") {
+    add_multiline_stdout(result, fish_completion_script());
+  } else {
+    result.exit_code = 1;
+    auto color = stderr_color_enabled();
+    result.add_stderr(intron::error_line(
+        std::format("unsupported shell: {}", shell), color));
+    result.add_stderr(intron::hint_line("expected bash, zsh, or fish", color));
+  }
+  return result;
+}
+
 auto usage_result(int exit_code) -> intron::CommandResult {
     auto result = intron::CommandResult{
         .exit_code = exit_code,
@@ -935,6 +1546,9 @@ auto command_from_string(std::string_view command) -> std::optional<intron::Comm
     if (command == "doctor") return intron::CommandKind::Doctor;
     if (command == "env") return intron::CommandKind::Env;
     if (command == "exec") return intron::CommandKind::Exec;
+    if (command == "commands") return intron::CommandKind::Commands;
+    if (command == "complete") return intron::CommandKind::Complete;
+    if (command == "completion") return intron::CommandKind::Completion;
     if (command == "self-update") return intron::CommandKind::SelfUpdate;
     if (command == "help" || command == "--help" || command == "-h") {
         return intron::CommandKind::Help;
@@ -1743,6 +2357,14 @@ auto package_version() -> std::string_view {
     return intron_version;
 }
 
+auto command_spec() -> cppx::cli::CommandSpec const& {
+    return command_spec_impl();
+}
+
+auto complete_words(std::vector<std::string> words) -> cppx::cli::CompletionResult {
+    return complete_words_impl(std::move(words));
+}
+
 auto parse_command_request(int argc, char* argv[])
     -> std::expected<intron::CommandRequest, intron::CommandResult>
 {
@@ -1795,6 +2417,12 @@ auto run_command(intron::CommandRequest const& request,
         return cmd_env(request, ports);
     case intron::CommandKind::Exec:
         return cmd_exec(request, ports);
+    case intron::CommandKind::Commands:
+        return cmd_commands(request);
+    case intron::CommandKind::Complete:
+        return cmd_complete(request);
+    case intron::CommandKind::Completion:
+        return cmd_completion(request);
     case intron::CommandKind::Help:
         return usage_result(0);
     case intron::CommandKind::SelfUpdate:

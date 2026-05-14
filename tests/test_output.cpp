@@ -43,6 +43,12 @@ void test_usage_documents_human_color_controls() {
           "usage documents status diagnostics");
     check(joined.contains("doctor  [--output human|json]"),
           "usage documents doctor diagnostics");
+    check(joined.contains("commands [--output human|json]"),
+          "usage documents command metadata");
+    check(joined.contains("complete [--output human|json|raw]"),
+          "usage documents completion candidates");
+    check(joined.contains("completion bash|zsh|fish"),
+          "usage documents shell completion generation");
     check(joined.contains("Output:"), "usage includes output section");
     check(joined.contains("INTRON_COLOR=auto|always|never"),
           "usage documents INTRON_COLOR");
