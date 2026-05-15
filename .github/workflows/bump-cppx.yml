@@ -1,0 +1,82 @@
+name: Bump cppx package
+
+on:
+  repository_dispatch:
+    types: [bump-cppx]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event.client_payload.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.BUMP_BOT_TOKEN }}
+
+      - name: Detect current cppx version
+        id: current
+        run: |
+          CURRENT=$(sed -n 's|^"github.com/misut/cppx"[[:space:]]*=[[:space:]]*"\([^"]*\)"$|\1|p' exon.toml)
+          test -n "$CURRENT"
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" = "$VERSION" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update exon.toml
+        if: steps.current.outputs.changed == 'true'
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          sed -i "s|\"github.com/misut/cppx\" = \"${CURRENT}\"|\"github.com/misut/cppx\" = \"${VERSION}\"|" exon.toml
+
+      - name: Install exon
+        if: steps.current.outputs.changed == 'true'
+        run: |
+          EXON_VERSION=$(sed -n 's/^"vfox:misut\/mise-exon"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/\1/p' mise.toml)
+          test -n "$EXON_VERSION"
+          gh release download "v${EXON_VERSION}" -R misut/exon -p "exon-*-x86_64-linux-gnu.tar.gz"
+          tar xzf exon-*.tar.gz && rm exon-*.tar.gz
+          chmod +x exon && sudo mv exon /usr/local/bin/
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_BOT_TOKEN }}
+
+      - name: Regenerate generated files
+        if: steps.current.outputs.changed == 'true'
+        run: exon sync
+
+      - name: Create and auto-merge PR
+        if: steps.current.outputs.changed == 'true'
+        run: |
+          BRANCH="chore/bump-cppx-v${VERSION}"
+          git checkout -b "$BRANCH"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes detected"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --author "misut <pkr5207@gmail.com>" -m "chore: bump cppx to v${VERSION}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git push --force origin "HEAD:$BRANCH"
+          else
+            git push origin "$BRANCH"
+          fi
+          PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create \
+              --title "chore: bump cppx to v${VERSION}" \
+              --body "Automated bump triggered by [cppx v${VERSION}](https://github.com/misut/cppx/releases/tag/v${VERSION})." \
+              --base main \
+              --head "$BRANCH")
+          fi
+          gh pr merge "$PR_URL" --auto --squash --delete-branch
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_BOT_TOKEN }}
