@@ -645,9 +645,9 @@ void test_status_human_reports_missing_project_config_with_hint() {
           "doctor includes actionable project config hint");
     check(joined.contains("no effective toolchain entries"),
           "doctor reports empty effective toolchain");
-    check(joined.contains("summary\n  x FAIL"),
+    check(joined.contains(":: summary\n  x FAIL"),
           "doctor includes a status summary");
-    check(joined.contains("terminal\n"),
+    check(joined.contains(":: terminal\n"),
           "doctor includes terminal capability details");
 }
 
