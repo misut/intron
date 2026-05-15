@@ -85,7 +85,7 @@ Once that environment is active, you can bootstrap intron itself from a normal s
 
 ```powershell
 git clone https://github.com/misut/tomlcpp --branch v0.3.0
-git clone https://github.com/misut/cppx --branch v1.4.0
+git clone https://github.com/misut/cppx --branch v1.12.0
 cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
   -DTOMLCPP_DIR=..\tomlcpp `
@@ -98,7 +98,7 @@ Or keep the current shell untouched and run the same flow through `intron exec`:
 
 ```powershell
 git clone https://github.com/misut/tomlcpp --branch v0.3.0
-git clone https://github.com/misut/cppx --branch v1.4.0
+git clone https://github.com/misut/cppx --branch v1.12.0
 intron exec -- cmake -G Ninja -S .github/cmake -B build `
   -DCMAKE_BUILD_TYPE=Release `
   -DTOMLCPP_DIR=..\tomlcpp `
