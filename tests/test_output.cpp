@@ -54,6 +54,8 @@ void test_usage_documents_human_color_controls() {
           "usage documents INTRON_COLOR");
     check(joined.contains("NO_COLOR=1 disables color in auto mode"),
           "usage documents NO_COLOR");
+    check(joined.contains("FORCE_COLOR=1 enables color in auto mode"),
+          "usage documents FORCE_COLOR");
 }
 
 void test_update_rendering() {

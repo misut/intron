@@ -105,6 +105,7 @@ inline auto usage_lines(std::string_view version,
         section_line("Output:", color_enabled),
         "  INTRON_COLOR=auto|always|never controls ANSI color in human output",
         "  NO_COLOR=1 disables color in auto mode",
+        "  FORCE_COLOR=1 enables color in auto mode unless NO_COLOR is set",
     };
 }
 
