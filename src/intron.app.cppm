@@ -954,33 +954,32 @@ auto render_status_human(StatusReport const &report)
   auto blocking_diagnostics = std::ranges::count_if(report.diagnostics, [](auto const &diagnostic) {
     return diagnostic.severity != cppx::terminal::DiagnosticSeverity::info;
   });
+  auto summary_status = blocking_diagnostics == 0 ? cppx::terminal::StatusKind::ok
+                                                  : cppx::terminal::StatusKind::fail;
+  auto summary_message = blocking_diagnostics == 0
+      ? std::string{"toolchain ready"}
+      : std::format("{} diagnostic{} need attention", blocking_diagnostics,
+                    blocking_diagnostics == 1 ? "" : "s");
 
-  lines.push_back(intron::section_line("summary", color));
-  lines.push_back(std::format(
-      "  {} {}",
-      cppx::terminal::status_badge(
-          blocking_diagnostics == 0 ? cppx::terminal::StatusKind::ok
-                                    : cppx::terminal::StatusKind::fail,
-          color, caps.unicode_enabled),
-      blocking_diagnostics == 0
-          ? "toolchain ready"
-          : std::format("{} diagnostic{} need attention", blocking_diagnostics,
-                        blocking_diagnostics == 1 ? "" : "s")));
+  lines.push_back(intron::section_header_line("summary", color, caps.unicode_enabled));
+  lines.push_back(intron::summary_line(summary_status, summary_message, color,
+                                       caps.unicode_enabled));
   lines.push_back("");
 
-  lines.push_back(intron::section_line("intron", color));
+  lines.push_back(intron::section_header_line("intron", color, caps.unicode_enabled));
   lines.push_back(intron::key_value_line("version", report.version));
   lines.push_back(intron::key_value_line("platform", report.platform));
   lines.push_back(intron::key_value_line("triple", report.triple));
   lines.push_back("");
 
-  lines.push_back(intron::section_line("project", color));
+  lines.push_back(intron::section_header_line("project", color, caps.unicode_enabled));
   lines.push_back(intron::key_value_line(
       "config",
       report.project_config ? report.project_config->string() : "(not found)"));
   lines.push_back("");
 
-  lines.push_back(intron::section_line("effective toolchain", color));
+  lines.push_back(intron::section_header_line("effective toolchain", color,
+                                              caps.unicode_enabled));
   if (report.effective_toolchain.empty()) {
     lines.push_back(intron::status_line(cppx::terminal::StatusKind::fail,
                                         "no entries", color));
@@ -992,7 +991,7 @@ auto render_status_human(StatusReport const &report)
   }
   lines.push_back("");
 
-  lines.push_back(intron::section_line("tools", color));
+  lines.push_back(intron::section_header_line("tools", color, caps.unicode_enabled));
   if (report.tools.empty()) {
     lines.push_back(intron::status_line(cppx::terminal::StatusKind::skip,
                                         "no configured tools", color));
@@ -1011,7 +1010,8 @@ auto render_status_human(StatusReport const &report)
   }
   lines.push_back("");
 
-  lines.push_back(intron::section_line("resolved binaries", color));
+  lines.push_back(intron::section_header_line("resolved binaries", color,
+                                              caps.unicode_enabled));
   auto compiler = std::optional<std::string>{};
   if (auto cxx = report.environment.assignments.find("CXX");
       cxx != report.environment.assignments.end()) {
@@ -1032,7 +1032,7 @@ auto render_status_human(StatusReport const &report)
       find_tool_binary(report, "ninja", "ninja").value_or("(missing)")));
   lines.push_back("");
 
-  lines.push_back(intron::section_line("environment", color));
+  lines.push_back(intron::section_header_line("environment", color, caps.unicode_enabled));
   if (report.environment.available) {
     lines.push_back(intron::status_line(cppx::terminal::StatusKind::ok,
                                         "environment plan resolved", color));
@@ -1049,7 +1049,7 @@ auto render_status_human(StatusReport const &report)
   }
   lines.push_back("");
 
-  lines.push_back(intron::section_line("network", color));
+  lines.push_back(intron::section_header_line("network", color, caps.unicode_enabled));
   lines.push_back(
       intron::key_value_line("backend", report.network.selected_backend));
   lines.push_back(intron::key_value_line(
@@ -1059,7 +1059,7 @@ auto render_status_human(StatusReport const &report)
           : std::format("INTRON_NET_BACKEND={}", report.network.env_value)));
   lines.push_back("");
 
-  lines.push_back(intron::section_line("msvc", color));
+  lines.push_back(intron::section_header_line("msvc", color, caps.unicode_enabled));
   lines.push_back(intron::key_value_line("status", report.msvc.status));
   if (!report.msvc.cl.empty()) {
     lines.push_back(intron::key_value_line("cl", report.msvc.cl));
@@ -1073,7 +1073,7 @@ auto render_status_human(StatusReport const &report)
   }
   lines.push_back("");
 
-  lines.push_back(intron::section_line("diagnostics", color));
+  lines.push_back(intron::section_header_line("diagnostics", color, caps.unicode_enabled));
   if (report.diagnostics.empty()) {
     lines.push_back(intron::status_line(cppx::terminal::StatusKind::ok,
                                         "no issues detected", color));
@@ -1091,7 +1091,7 @@ auto render_status_human(StatusReport const &report)
   }
   lines.push_back("");
 
-  lines.push_back(intron::section_line("terminal", color));
+  lines.push_back(intron::section_header_line("terminal", color, caps.unicode_enabled));
   lines.push_back(intron::key_value_line("stdout tty", caps.is_terminal ? "yes" : "no"));
   lines.push_back(intron::key_value_line("color", caps.color_enabled ? "enabled" : "disabled"));
   lines.push_back(

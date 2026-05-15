@@ -16,9 +16,14 @@ void test_status_and_stage_lines() {
     check(intron::status_line(cppx::terminal::StatusKind::ok, "ready") ==
               "  OK   ready",
           "status line uses indented compact status cell");
+    check(intron::summary_line(cppx::terminal::StatusKind::ok, "ready") ==
+              "  + OK  ready",
+          "summary line uses visual status badge");
     check(intron::stage_line("extract", 3, 4, "ninja 1.13.2") ==
               "[3/4] [ninja 1.13.2] extract",
           "stage line includes index, total, context, and stage");
+    check(intron::section_header_line("summary") == ":: summary",
+          "section header line uses ascii accent by default");
 }
 
 void test_diagnostic_lines_use_terminal_primitives() {

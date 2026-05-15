@@ -180,9 +180,11 @@ instead of `eval "$(intron env)"`.
 ### Output modes
 
 Human-facing commands use compact stage and status lines. Long-running
-installation work is grouped by tool and phase, while script-oriented commands
-such as `intron env`, `intron which`, and `intron exec -- ...` keep their
-machine-readable output unchanged.
+installation work is grouped by tool and phase, while `intron status` and
+`intron doctor` use small capability-aware section accents plus a readiness
+summary so toolchain, environment, diagnostics, and terminal details are easier
+to scan. Script-oriented commands such as `intron env`, `intron which`, and
+`intron exec -- ...` keep their machine-readable output unchanged.
 
 Set `INTRON_COLOR=auto|always|never` to control ANSI color in human output.
 `NO_COLOR=1` disables color in auto mode, while `FORCE_COLOR=1` enables color

@@ -21,6 +21,18 @@ inline auto status_line(cppx::terminal::StatusKind status,
         message);
 }
 
+inline auto summary_line(cppx::terminal::StatusKind status,
+                         std::string_view message,
+                         bool color_enabled = false,
+                         bool unicode_enabled = false) -> std::string
+{
+    return cppx::terminal::summary_line(
+        status,
+        message,
+        color_enabled,
+        unicode_enabled);
+}
+
 inline auto stage_line(std::string_view name,
                        int index,
                        int total,
@@ -34,6 +46,16 @@ inline auto section_line(std::string_view title,
                          bool color_enabled = false) -> std::string
 {
     return cppx::terminal::section(title, color_enabled);
+}
+
+inline auto section_header_line(std::string_view title,
+                                bool color_enabled = false,
+                                bool unicode_enabled = false) -> std::string
+{
+    return cppx::terminal::section_header(
+        title,
+        color_enabled,
+        unicode_enabled);
 }
 
 inline auto key_value_line(std::string_view key,
