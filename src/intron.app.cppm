@@ -842,130 +842,6 @@ auto json_string_array(std::vector<std::string> const &values) -> std::string {
   return out;
 }
 
-auto option_arity_text(cxcli::OptionArity arity) -> std::string_view {
-  switch (arity) {
-  case cxcli::OptionArity::none:
-    return "none";
-  case cxcli::OptionArity::one:
-    return "one";
-  }
-  return "none";
-}
-
-auto completion_kind_text(cxcli::CompletionKind kind) -> std::string_view {
-  switch (kind) {
-  case cxcli::CompletionKind::command:
-    return "command";
-  case cxcli::CompletionKind::option:
-    return "option";
-  case cxcli::CompletionKind::option_value:
-    return "option_value";
-  case cxcli::CompletionKind::positional:
-    return "positional";
-  }
-  return "command";
-}
-
-auto option_metadata_json(cxcli::OptionSpec const &option) -> std::string {
-  auto out = std::format(
-      "{{\"name\":{},\"arity\":{},\"repeatable\":{},\"required\":{}",
-      json_string(option.name), json_string(option_arity_text(option.arity)),
-      json_bool(option.repeatable), json_bool(option.required));
-  if (option.short_name != '\0') {
-    out += std::format(",\"short_name\":{}",
-                       json_string(std::string{option.short_name}));
-  } else {
-    out += ",\"short_name\":null";
-  }
-  out += std::format(
-      ",\"value_name\":{},\"description\":{},\"category\":{},\"value_hints\":{},\"hidden\":{}}}",
-      json_string(option.value_name), json_string(option.description),
-      json_string(option.category), json_string_array(option.value_hints),
-      json_bool(option.hidden));
-  return out;
-}
-
-auto option_metadata_array_json(std::vector<cxcli::OptionSpec> const &options)
-    -> std::string {
-  auto out = std::string{"["};
-  for (std::size_t i = 0; i < options.size(); ++i) {
-    if (i != 0) {
-      out.push_back(',');
-    }
-    out += option_metadata_json(options[i]);
-  }
-  out.push_back(']');
-  return out;
-}
-
-auto command_metadata_json(cxcli::CommandSpec const &command) -> std::string {
-  return std::format(
-      "{{\"name\":{},\"aliases\":{},\"summary\":{},\"description\":{},"
-      "\"category\":{},\"positional_name\":{},\"positional_description\":{},"
-      "\"allow_positionals\":{},\"hidden\":{},\"examples\":{},\"options\":{}}}",
-      json_string(command.name), json_string_array(command.aliases),
-      json_string(command.summary), json_string(command.description),
-      json_string(command.category), json_string(command.positional_name),
-      json_string(command.positional_description),
-      json_bool(command.allow_positionals), json_bool(command.hidden),
-      json_string_array(command.examples),
-      option_metadata_array_json(command.options));
-}
-
-auto command_catalog_json(cxcli::CommandSpec const &root = command_spec_impl())
-    -> std::string {
-  auto out = std::string{"["};
-  auto first = true;
-  for (auto const &command : root.subcommands) {
-    if (command.hidden) {
-      continue;
-    }
-    if (!first) {
-      out.push_back(',');
-    }
-    first = false;
-    out += command_metadata_json(command);
-  }
-  out.push_back(']');
-  return out;
-}
-
-auto completion_context_json(cxcli::CompletionContext const &context)
-    -> std::string {
-  return std::format(
-      "{{\"command_path\":{},\"after_terminator\":{},\"expects_option_value\":{},\"option_name\":{}}}",
-      json_string_array(context.command_path),
-      json_bool(context.after_terminator),
-      json_bool(context.expects_option_value),
-      json_string(context.option_name));
-}
-
-auto completion_candidate_json(cxcli::CompletionCandidate const &candidate)
-    -> std::string {
-  return std::format(
-      "{{\"kind\":{},\"value\":{},\"description\":{},\"value_name\":{},"
-      "\"category\":{},\"append_space\":{}}}",
-      json_string(completion_kind_text(candidate.kind)),
-      json_string(candidate.value),
-      json_string(candidate.description),
-      json_string(candidate.value_name),
-      json_string(candidate.category),
-      json_bool(candidate.append_space));
-}
-
-auto completion_candidates_json(
-    std::vector<cxcli::CompletionCandidate> const &candidates) -> std::string {
-  auto out = std::string{"["};
-  for (std::size_t i = 0; i < candidates.size(); ++i) {
-    if (i != 0) {
-      out.push_back(',');
-    }
-    out += completion_candidate_json(candidates[i]);
-  }
-  out.push_back(']');
-  return out;
-}
-
 auto render_status_json(StatusReport const &report) -> std::string {
   auto out = std::string{};
   out += "{";
@@ -1395,7 +1271,8 @@ auto cmd_commands(intron::CommandRequest const &request)
   if (*mode == StatusOutputMode::Json) {
     result.add_stdout(std::format("{{\"version\":{},\"commands\":{}}}",
                                   json_string(intron_version),
-                                  command_catalog_json()));
+                                  cxcli::command_catalog_json(
+                                      command_spec_impl())));
     return result;
   }
 
@@ -1418,10 +1295,7 @@ auto cmd_complete(intron::CommandRequest const &request)
   auto completion = complete_words_impl(std::move(invocation->words));
   auto result = intron::CommandResult{};
   if (invocation->output == CompletionOutputMode::Json) {
-    result.add_stdout(std::format("{{\"context\":{},\"candidates\":{}}}",
-                                  completion_context_json(completion.context),
-                                  completion_candidates_json(
-                                      completion.candidates)));
+    result.add_stdout(cxcli::completion_result_json(completion));
     return result;
   }
 
@@ -1437,49 +1311,6 @@ auto cmd_complete(intron::CommandRequest const &request)
   return result;
 }
 
-auto bash_completion_script() -> std::string {
-  return R"(# bash completion for intron
-_intron_complete()
-{
-    local -a candidates
-    mapfile -t candidates < <(intron complete --output raw -- "${COMP_WORDS[@]:1}")
-    COMPREPLY=("${candidates[@]}")
-}
-
-complete -F _intron_complete intron
-)";
-}
-
-auto zsh_completion_script() -> std::string {
-  return R"(#compdef intron
-_intron()
-{
-    local -a candidates
-    candidates=("${(@f)$(intron complete --output raw -- ${words[@]:2})}")
-    compadd -a candidates
-}
-
-_intron "$@"
-)";
-}
-
-auto fish_completion_script() -> std::string {
-  return R"(function __intron_complete
-    set -l tokens (commandline -opc)
-    set -e tokens[1]
-    set -l current (commandline -ct)
-    if test (count $tokens) -gt 0
-        set tokens[-1] $current
-    else
-        set tokens $current
-    end
-    intron complete --output raw -- $tokens
-end
-
-complete -c intron -f -a '(__intron_complete)'
-)";
-}
-
 auto cmd_completion(intron::CommandRequest const &request)
     -> intron::CommandResult {
   auto result = intron::CommandResult{};
@@ -1492,19 +1323,17 @@ auto cmd_completion(intron::CommandRequest const &request)
   }
 
   auto shell = std::string_view{request.args.front()};
-  if (shell == "bash") {
-    add_multiline_stdout(result, bash_completion_script());
-  } else if (shell == "zsh") {
-    add_multiline_stdout(result, zsh_completion_script());
-  } else if (shell == "fish") {
-    add_multiline_stdout(result, fish_completion_script());
-  } else {
+  auto parsed = cxcli::parse_completion_shell(shell);
+  if (!parsed) {
     result.exit_code = 1;
     auto color = stderr_color_enabled();
     result.add_stderr(intron::error_line(
         std::format("unsupported shell: {}", shell), color));
     result.add_stderr(intron::hint_line("expected bash, zsh, or fish", color));
+    return result;
   }
+  add_multiline_stdout(result,
+                       cxcli::completion_script(command_spec_impl(), *parsed));
   return result;
 }
 
