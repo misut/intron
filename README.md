@@ -185,7 +185,10 @@ such as `intron env`, `intron which`, and `intron exec -- ...` keep their
 machine-readable output unchanged.
 
 Set `INTRON_COLOR=auto|always|never` to control ANSI color in human output.
-`NO_COLOR=1` disables color in auto mode.
+`NO_COLOR=1` disables color in auto mode, while `FORCE_COLOR=1` enables color
+unless `NO_COLOR` is also set. `intron status` and `intron doctor` include a
+summary plus terminal capability details so CI/non-TTY output explains why live
+styling is or is not active.
 
 `intron env` supports two additive output modes for cases where the default
 shell-eval form is unwanted (for example, GitHub Actions, where reassigning

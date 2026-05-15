@@ -645,6 +645,10 @@ void test_status_human_reports_missing_project_config_with_hint() {
           "doctor includes actionable project config hint");
     check(joined.contains("no effective toolchain entries"),
           "doctor reports empty effective toolchain");
+    check(joined.contains("summary\n  x FAIL"),
+          "doctor includes a status summary");
+    check(joined.contains("terminal\n"),
+          "doctor includes terminal capability details");
 }
 
 void test_status_reports_windows_msvc_through_ports() {

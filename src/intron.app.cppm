@@ -949,7 +949,25 @@ auto find_tool_binary(StatusReport const &report, std::string_view tool,
 auto render_status_human(StatusReport const &report)
     -> std::vector<std::string> {
   auto color = stdout_color_enabled();
+  auto caps = cppx::terminal::system::stdout_capabilities(intron::terminal_options());
   auto lines = std::vector<std::string>{};
+  auto blocking_diagnostics = std::ranges::count_if(report.diagnostics, [](auto const &diagnostic) {
+    return diagnostic.severity != cppx::terminal::DiagnosticSeverity::info;
+  });
+
+  lines.push_back(intron::section_line("summary", color));
+  lines.push_back(std::format(
+      "  {} {}",
+      cppx::terminal::status_badge(
+          blocking_diagnostics == 0 ? cppx::terminal::StatusKind::ok
+                                    : cppx::terminal::StatusKind::fail,
+          color, caps.unicode_enabled),
+      blocking_diagnostics == 0
+          ? "toolchain ready"
+          : std::format("{} diagnostic{} need attention", blocking_diagnostics,
+                        blocking_diagnostics == 1 ? "" : "s")));
+  lines.push_back("");
+
   lines.push_back(intron::section_line("intron", color));
   lines.push_back(intron::key_value_line("version", report.version));
   lines.push_back(intron::key_value_line("platform", report.platform));
@@ -1071,6 +1089,16 @@ auto render_status_human(StatusReport const &report)
           color));
     }
   }
+  lines.push_back("");
+
+  lines.push_back(intron::section_line("terminal", color));
+  lines.push_back(intron::key_value_line("stdout tty", caps.is_terminal ? "yes" : "no"));
+  lines.push_back(intron::key_value_line("color", caps.color_enabled ? "enabled" : "disabled"));
+  lines.push_back(
+      intron::key_value_line("unicode", caps.unicode_enabled ? "enabled" : "disabled"));
+  lines.push_back(intron::key_value_line("ci", caps.is_ci ? "yes" : "no"));
+  lines.push_back(
+      intron::key_value_line("github actions", caps.is_github_actions ? "yes" : "no"));
   return lines;
 }
 
